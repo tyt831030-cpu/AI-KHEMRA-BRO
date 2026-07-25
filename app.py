@@ -788,7 +788,7 @@ def atempo_chain(speed):
     return ",".join(f"atempo={value:.5f}" for value in factors)
 
 
-def create_mp3(srt_text):
+def create_mp3(srt_text, progress_callback=None):
     cues = parse_srt(srt_text)
     if not cues:
         raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
@@ -801,12 +801,22 @@ def create_mp3(srt_text):
         clips = []
         clip_durations = []
 
+        total_cues = len(cues)
+        if progress_callback:
+            progress_callback(2, "កំពុងរៀបចំសំឡេងតួអង្គ…")
+
         for index, cue in enumerate(cues):
             clip = root / f'clip_{index:04d}.mp3'
             profile = VOICE_PROFILES.get(cue['tag'], VOICE_PROFILES['M'])
             run_async(synthesize(cue['text'], profile, clip))
             clips.append(clip)
             clip_durations.append(probe_audio_duration(clip))
+            if progress_callback:
+                percent = 5 + int(((index + 1) / total_cues) * 82)
+                progress_callback(
+                    min(percent, 87),
+                    f"កំពុងបង្កើតសំឡេងខ្មែរ {index + 1}/{total_cues}…",
+                )
 
         command = ['ffmpeg', '-y']
         for clip in clips:
@@ -879,11 +889,16 @@ def create_mp3(srt_text):
             str(output),
         ])
 
+        if progress_callback:
+            progress_callback(92, "កំពុងបញ្ចូលសំឡេងទាំងអស់ជាបទ MP3 តែមួយ…")
+
         result = subprocess.run(command, capture_output=True, text=True, timeout=900)
         if result.returncode != 0:
             raise RuntimeError(result.stderr[-1800:] or 'FFmpeg failed.')
         if not output.exists() or output.stat().st_size < 1000:
             raise RuntimeError('MP3 ត្រូវបានបង្កើត ប៉ុន្តែមិនមានសំឡេងគ្រប់គ្រាន់។')
+        if progress_callback:
+            progress_callback(100, "បង្កើត MP3 រួចរាល់")
         return output.read_bytes()
 
 
@@ -1135,48 +1150,41 @@ with tab_video:
 
     st.markdown('<div class="section-title">2️⃣ AI Dubbing (Edge TTS Studio)</div>', unsafe_allow_html=True)
 
-    # Use a queued action instead of running the long MP3 task inside the
-    # button callback. This prevents mobile Streamlit from temporarily drawing
-    # old/duplicate buttons while the page is busy.
-    if "audio_job_pending" not in st.session_state:
-        st.session_state.audio_job_pending = False
-
     generate_clicked = st.button(
         "🎙️ Generate Dubbed Audio (MP3)",
         key="generate_audio",
-        disabled=st.session_state.audio_job_pending,
+        use_container_width=False,
     )
 
     if generate_clicked:
         if not st.session_state.srt_text.strip():
             st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
         else:
-            st.session_state.audio_job_pending = True
-            st.rerun()
+            progress_bar = st.progress(0)
+            progress_text = st.empty()
+            started_at = time.monotonic()
 
-    if st.session_state.audio_job_pending:
-        audio_status = st.status(
-            "🎙️ កំពុងបង្កើតសំឡេងខ្មែរ… សូមកុំចុចប៊ូតុងផ្សេង",
-            expanded=True,
-        )
-        try:
-            audio_status.write("កំពុងរៀបចំសំឡេងតួអង្គ និងពេលវេលា…")
-            st.session_state.audio_bytes = create_mp3(st.session_state.srt_text)
-            st.session_state.audio_job_pending = False
-            audio_status.update(
-                label="✅ បង្កើត MP3 រួចរាល់",
-                state="complete",
-                expanded=False,
-            )
-            st.rerun()
-        except Exception as exc:
-            st.session_state.audio_job_pending = False
-            audio_status.update(
-                label="❌ បង្កើត MP3 មិនបាន",
-                state="error",
-                expanded=True,
-            )
-            st.error(f"❌ {exc}")
+            def update_audio_progress(percent, message):
+                elapsed = max(0, int(time.monotonic() - started_at))
+                minutes, seconds = divmod(elapsed, 60)
+                progress_bar.progress(max(0, min(100, int(percent))))
+                progress_text.markdown(
+                    f"### ⏱️ {int(percent)}% • {minutes:02d}:{seconds:02d}<br>{message}",
+                    unsafe_allow_html=True,
+                )
+
+            try:
+                update_audio_progress(1, "កំពុងចាប់ផ្ដើមបង្កើតសំឡេង…")
+                st.session_state.audio_bytes = create_mp3(
+                    st.session_state.srt_text,
+                    progress_callback=update_audio_progress,
+                )
+                update_audio_progress(100, "✅ បង្កើត MP3 រួចរាល់")
+                st.success("✅ សំឡេង MP3 បានបង្កើតរួចរាល់")
+            except Exception as exc:
+                progress_bar.empty()
+                progress_text.empty()
+                st.error(f"❌ បង្កើត MP3 មិនបាន៖ {exc}")
 
     if st.session_state.audio_bytes:
         st.audio(st.session_state.audio_bytes, format="audio/mp3")
