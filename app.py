@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import datetime
+import hashlib
 import re
 import shutil
 import subprocess
@@ -8,11 +11,13 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 import edge_tts
+import extra_streamlit_components as stx
 import streamlit as st
+from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='expanded')
+st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
 st.markdown('''
 <style>
@@ -35,10 +40,98 @@ div[data-testid="stTextArea"] textarea{background:#182438!important;color:#fff!i
 button[data-baseweb="tab"]{background:#151f31;border-radius:8px 8px 0 0;padding:10px 16px}
 button[data-baseweb="tab"][aria-selected="true"]{background:linear-gradient(90deg,#b000df,#f000ff);color:white}
 .clear-wrap .stButton>button{background:linear-gradient(90deg,#08bce3,#12d6ef);color:#00141b;font-weight:900}
+/* Remove Streamlit's white top bar, GitHub icon, Fork label and menu. */
+[data-testid="stHeader"]{
+display:none!important;
+}
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+#MainMenu,
+footer{
+display:none!important;
+}
+
+/* Keep the sidebar arrow for opening the API-key panel. */
+[data-testid="stSidebarCollapsedControl"]{
+position:fixed!important;
+top:7px!important;
+left:7px!important;
+right:auto!important;
+z-index:999999!important;
+width:34px!important;
+height:32px!important;
+}
+[data-testid="stSidebarCollapsedControl"] button{
+width:34px!important;
+height:32px!important;
+min-height:32px!important;
+padding:1px!important;
+border-radius:8px!important;
+background:rgba(15,23,42,.92)!important;
+border:1px solid rgba(34,211,238,.55)!important;
+box-shadow:0 2px 10px rgba(0,0,0,.30)!important;
+}
+[data-testid="stSidebarCollapsedControl"] svg{
+display:block!important;
+width:18px!important;
+height:18px!important;
+color:#e5e7eb!important;
+}
+
+/* Let the branded app header begin at the very top of the phone. */
+.block-container{
+padding-top:.45rem!important;
+}
+.hero{
+margin-top:0!important;
+width:100%!important;
+box-sizing:border-box!important;
+overflow:hidden!important;
+}
+.hero h1{
+white-space:nowrap!important;
+line-height:1.05!important;
+}
+.hero p{
+white-space:normal!important;
+overflow-wrap:anywhere!important;
+}
+
 @media(max-width:700px){
-.block-container{padding-left:.75rem;padding-right:.75rem}
-.hero{padding:24px 10px}.hero h1{font-size:31px}.hero p{font-size:11px}
+.block-container{
+padding-left:.55rem!important;
+padding-right:.55rem!important;
+padding-top:.35rem!important;
+}
+.hero{
+padding:28px 8px 24px!important;
+border-radius:18px!important;
+margin-bottom:14px!important;
+}
+.hero h1{
+font-size:clamp(28px,9vw,42px)!important;
+letter-spacing:-1px!important;
+}
+.hero p{
+font-size:clamp(9px,2.7vw,12px)!important;
+letter-spacing:.8px!important;
+line-height:1.35!important;
+padding:0 6px!important;
+}
 .section-title{font-size:26px}
+[data-testid="stSidebarCollapsedControl"]{
+top:5px!important;
+left:5px!important;
+right:auto!important;
+width:32px!important;
+height:30px!important;
+}
+[data-testid="stSidebarCollapsedControl"] button{
+width:32px!important;
+height:30px!important;
+min-height:30px!important;
+}
 }
 </style>
 ''', unsafe_allow_html=True)
@@ -112,10 +205,103 @@ Rules:
 - JSON only. No explanations or markdown.
 """
 
+API_COOKIE_NAME = "ai_khemra_bro_private_api"
+COOKIE_SECRET_CONFIGURED = False
+
+try:
+    raw_cookie_secret = str(st.secrets.get("COOKIE_SECRET", "")).strip()
+except Exception:
+    raw_cookie_secret = ""
+
+if raw_cookie_secret:
+    COOKIE_SECRET_CONFIGURED = True
+else:
+    # Safe isolation fallback: each live browser session gets a different key.
+    # Persistence across a full server restart requires COOKIE_SECRET in Streamlit Secrets.
+    if "_temporary_cookie_secret" not in st.session_state:
+        st.session_state._temporary_cookie_secret = Fernet.generate_key().decode("utf-8")
+    raw_cookie_secret = st.session_state._temporary_cookie_secret
+
+fernet_key = base64.urlsafe_b64encode(hashlib.sha256(raw_cookie_secret.encode("utf-8")).digest())
+api_cipher = Fernet(fernet_key)
+cookie_manager = stx.CookieManager(key="ai_khemra_private_cookie_manager")
+
+
+def encrypt_api_keys(api_keys_text):
+    cleaned = "\n".join(
+        line.strip() for line in api_keys_text.splitlines() if line.strip()
+    )
+    if not cleaned:
+        return ""
+    return api_cipher.encrypt(cleaned.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_api_keys(cookie_value):
+    if not cookie_value:
+        return ""
+    try:
+        return api_cipher.decrypt(str(cookie_value).encode("utf-8")).decode("utf-8")
+    except (InvalidToken, ValueError, TypeError):
+        return ""
+
+
+def load_private_api_keys():
+    """Read only this browser/device's encrypted API-key cookie."""
+    try:
+        return decrypt_api_keys(cookie_manager.get(API_COOKIE_NAME))
+    except Exception:
+        return ""
+
+
+def save_private_api_keys(api_keys_text):
+    """Save encrypted API keys only in the current browser/device."""
+    cleaned = "\n".join(
+        line.strip() for line in api_keys_text.splitlines() if line.strip()
+    )
+    try:
+        if cleaned:
+            cookie_manager.set(
+                API_COOKIE_NAME,
+                encrypt_api_keys(cleaned),
+                expires_at=datetime.datetime.now() + datetime.timedelta(days=3650),
+                key="save_private_api_cookie",
+            )
+        else:
+            cookie_manager.delete(API_COOKIE_NAME, key="delete_private_api_cookie")
+    except Exception:
+        # Session state still keeps the key private for the active user session.
+        pass
+
+
+def api_keys_changed():
+    save_private_api_keys(st.session_state.get("api_keys_manager", ""))
+
+
+def clear_private_user_session():
+    """Remove only the current user's key and working files/state."""
+    try:
+        cookie_manager.delete(API_COOKIE_NAME, key="logout_private_api_cookie")
+    except Exception:
+        pass
+    for state_key in (
+        "api_keys_manager",
+        "srt_text",
+        "pending_srt",
+        "audio_bytes",
+        "pending_editor_update",
+        "audio_job_pending",
+    ):
+        if state_key in st.session_state:
+            del st.session_state[state_key]
+
+
 @st.cache_resource(show_spinner=False)
 def load_whisper_model():
     # Base + int8 is selected so it can run on Streamlit Community Cloud CPU.
     return WhisperModel("base", device="cpu", compute_type="int8")
+
+if "api_keys_manager" not in st.session_state:
+    st.session_state.api_keys_manager = load_private_api_keys()
 
 for key,value in {
     'srt_text':'',
@@ -627,7 +813,9 @@ with st.sidebar:
         '<div class="profile-card">👋 <b>AI KHEMRA BRO</b><br><small>ROLE: ADMIN</small><br><br>🗓️ PLAN: LIFETIME<br>💎 PRO</div>',
         unsafe_allow_html=True,
     )
-    st.button("🚪 ចាកចេញ (Logout)", key="logout")
+    if st.button("🚪 ចាកចេញ (Logout)", key="logout"):
+        clear_private_user_session()
+        st.rerun()
 
     st.markdown("---")
     st.subheader("🌍 Target Language")
@@ -640,13 +828,20 @@ with st.sidebar:
         height=130,
         placeholder="AIza...\nAIza...",
         key="api_keys_manager",
+        on_change=api_keys_changed,
+        help="API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកតែលើ browser/ទូរសព្ទនេះ។ អ្នកប្រើផ្សេងមិនអាចមើលឃើញបានទេ។",
     )
     valid_api_keys = [x.strip() for x in api_keys_text.splitlines() if x.strip()]
     if valid_api_keys:
+        # Save only to this user's encrypted browser cookie.
+        save_private_api_keys(api_keys_text)
         st.markdown(
-            f'<div class="side-ok">✅ រកឃើញ {len(valid_api_keys)} Keys</div>',
+            f'<div class="side-ok">✅ រកឃើញ {len(valid_api_keys)} Keys'
+            '<br><small>🔒 ឯកជនសម្រាប់ទូរសព្ទនេះ — មិនចែករំលែកជាមួយអ្នកដទៃ</small></div>',
             unsafe_allow_html=True,
         )
+        if not COOKIE_SECRET_CONFIGURED:
+            st.caption("⚠️ ដើម្បីឱ្យ API Key នៅក្រោយ Server restart សូមដាក់ COOKIE_SECRET ក្នុង Streamlit Secrets។")
 
     st.markdown("---")
     st.subheader("🎭 Translation Style")
