@@ -4,6 +4,9 @@ import datetime
 import hashlib
 import hmac
 import json
+import os
+import secrets as pysecrets
+import sqlite3
 import re
 import shutil
 import subprocess
@@ -371,48 +374,144 @@ cookie_manager = stx.CookieManager(key="ai_khemra_private_cookie_manager")
 # Public contact links shown on the login page and inside the app.
 FACEBOOK_URL = "https://www.facebook.com/share/1Ehf5Fo8Ma/?mibextid=wwXIfr"
 TELEGRAM_URL = "https://t.me/KHEAMRA"
-AUTH_COOKIE_NAME = "ai_khemra_bro_login"
+AUTH_COOKIE_NAME = "ai_khemra_bro_access"
+ACCESS_DB_PATH = Path(os.getenv("ACCESS_DB_PATH", "data/access_codes.db"))
 
 
-def _configured_login():
-    """Read login credentials from Streamlit Secrets with safe working defaults."""
+def _db_connection():
+    ACCESS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(ACCESS_DB_PATH), timeout=20)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=20000")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS access_codes (
+            code TEXT PRIMARY KEY,
+            note TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER,
+            active INTEGER NOT NULL DEFAULT 1,
+            max_devices INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS access_devices (
+            code TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            PRIMARY KEY (code, device_id),
+            FOREIGN KEY(code) REFERENCES access_codes(code) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.commit()
+    return connection
+
+
+def _configured_admin():
     try:
-        username = str(st.secrets.get("APP_USERNAME", "kheamra")).strip()
-        password = str(st.secrets.get("APP_PASSWORD", "Khemra@2026"))
+        username = str(st.secrets.get("ADMIN_USERNAME", "kheamra")).strip()
+        password = str(st.secrets.get("ADMIN_PASSWORD", "Khemra@2026"))
     except Exception:
         username, password = "kheamra", "Khemra@2026"
     return username or "kheamra", password or "Khemra@2026"
 
 
-def _make_auth_token(username):
-    payload = {
-        "u": username,
-        "exp": int(time.time()) + (30 * 24 * 60 * 60),
-    }
+def _normalize_access_code(value):
+    return re.sub(r"[^A-Z0-9-]", "", str(value or "").upper().strip())
+
+
+def _new_access_code():
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    chunks = ["".join(pysecrets.choice(alphabet) for _ in range(4)) for _ in range(3)]
+    return "KHBR-" + "-".join(chunks)
+
+
+def _create_access_code(days, note, max_devices):
+    now = int(time.time())
+    expires_at = None if int(days) == 0 else now + int(days) * 86400
+    with _db_connection() as db:
+        for _ in range(20):
+            code = _new_access_code()
+            try:
+                db.execute(
+                    "INSERT INTO access_codes(code,note,created_at,expires_at,active,max_devices) VALUES(?,?,?,?,1,?)",
+                    (code, str(note or "").strip(), now, expires_at, max(1, int(max_devices))),
+                )
+                db.commit()
+                return code
+            except sqlite3.IntegrityError:
+                continue
+    raise RuntimeError("មិនអាចបង្កើត Access Code ថ្មីបានទេ។")
+
+
+def _validate_access_code(code, device_id):
+    code = _normalize_access_code(code)
+    now = int(time.time())
+    if not code or not device_id:
+        return False, "Access Code មិនត្រឹមត្រូវ។", None
+    with _db_connection() as db:
+        row = db.execute("SELECT * FROM access_codes WHERE code=?", (code,)).fetchone()
+        if row is None:
+            return False, "Access Code មិនត្រឹមត្រូវ។", None
+        if not int(row["active"]):
+            return False, "Access Code នេះត្រូវបានបិទ។", None
+        if row["expires_at"] is not None and int(row["expires_at"]) <= now:
+            return False, "Access Code នេះបានផុតកំណត់។", None
+        known = db.execute(
+            "SELECT 1 FROM access_devices WHERE code=? AND device_id=?",
+            (code, device_id),
+        ).fetchone()
+        if known is None:
+            count = db.execute(
+                "SELECT COUNT(*) AS total FROM access_devices WHERE code=?", (code,)
+            ).fetchone()["total"]
+            if int(count) >= int(row["max_devices"]):
+                return False, "Access Code នេះបានប្រើដល់ចំនួនឧបករណ៍កំណត់ហើយ។", None
+            db.execute(
+                "INSERT INTO access_devices(code,device_id,first_seen,last_seen) VALUES(?,?,?,?)",
+                (code, device_id, now, now),
+            )
+        else:
+            db.execute(
+                "UPDATE access_devices SET last_seen=? WHERE code=? AND device_id=?",
+                (now, code, device_id),
+            )
+        db.commit()
+        return True, "", row
+
+
+def _make_auth_token(code, device_id, expires_at):
+    expiry = int(expires_at) if expires_at else int(time.time()) + 3650 * 86400
+    payload = {"role": "user", "code": code, "device": device_id, "exp": expiry}
     return api_cipher.encrypt(json.dumps(payload).encode("utf-8")).decode("utf-8")
 
 
-def _auth_token_is_valid(token):
+def _read_auth_token(token):
     if not token:
-        return False
+        return None
     try:
         data = json.loads(api_cipher.decrypt(str(token).encode("utf-8")).decode("utf-8"))
-        configured_user, _ = _configured_login()
-        return (
-            hmac.compare_digest(str(data.get("u", "")), configured_user)
-            and int(data.get("exp", 0)) > int(time.time())
-        )
+        if data.get("role") != "user" or int(data.get("exp", 0)) <= int(time.time()):
+            return None
+        valid, _, _ = _validate_access_code(data.get("code"), data.get("device"))
+        return data if valid else None
     except Exception:
-        return False
+        return None
 
 
-def _save_auth_cookie(username):
+def _save_auth_cookie(code, device_id, expires_at):
     try:
+        expiry_dt = datetime.datetime.fromtimestamp(int(expires_at)) if expires_at else datetime.datetime.now() + datetime.timedelta(days=3650)
         cookie_manager.set(
             AUTH_COOKIE_NAME,
-            _make_auth_token(username),
-            expires_at=datetime.datetime.now() + datetime.timedelta(days=30),
-            key="save_login_cookie",
+            _make_auth_token(code, device_id, expires_at),
+            expires_at=expiry_dt,
+            key="save_access_cookie",
         )
     except Exception:
         pass
@@ -420,8 +519,9 @@ def _save_auth_cookie(username):
 
 def _logout_auth():
     st.session_state.authenticated = False
+    st.session_state.pop("access_code", None)
     try:
-        cookie_manager.delete(AUTH_COOKIE_NAME, key="delete_login_cookie")
+        cookie_manager.delete(AUTH_COOKIE_NAME, key="delete_access_cookie")
     except Exception:
         pass
 
@@ -434,49 +534,158 @@ def render_contact_buttons(prefix="public"):
         st.link_button("✈️ Telegram", TELEGRAM_URL, use_container_width=True)
 
 
+def _format_expiry(timestamp):
+    if timestamp is None:
+        return "មិនផុតកំណត់"
+    return datetime.datetime.fromtimestamp(int(timestamp)).strftime("%Y-%m-%d %H:%M")
+
+
+def render_admin_panel():
+    st.markdown(
+        '<div class="hero"><h1>AI KHEMRA BRO</h1><p>ADMIN ACCESS CODE MANAGER</p></div>',
+        unsafe_allow_html=True,
+    )
+    if not st.session_state.get("admin_authenticated"):
+        with st.form("admin_login_form"):
+            username = st.text_input("Admin Username")
+            password = st.text_input("Admin Password", type="password")
+            submitted = st.form_submit_button("👑 Admin Login", use_container_width=True)
+        if submitted:
+            expected_user, expected_password = _configured_admin()
+            if hmac.compare_digest(username.strip(), expected_user) and hmac.compare_digest(password, expected_password):
+                st.session_state.admin_authenticated = True
+                st.rerun()
+            st.error("❌ Admin Username ឬ Password មិនត្រឹមត្រូវ។")
+        st.link_button("⬅️ ត្រឡប់ទៅ User Login", "?", use_container_width=True)
+        st.stop()
+
+    top1, top2 = st.columns(2)
+    with top1:
+        st.link_button("👤 បើកទំព័រ User", "?", use_container_width=True)
+    with top2:
+        if st.button("🚪 Admin Logout", use_container_width=True):
+            st.session_state.admin_authenticated = False
+            st.rerun()
+
+    st.markdown("### ➕ បង្កើត Access Code ថ្មី")
+    with st.form("create_access_code_form"):
+        duration_label = st.selectbox("រយៈពេល", ["7 ថ្ងៃ", "30 ថ្ងៃ", "90 ថ្ងៃ", "365 ថ្ងៃ", "មិនផុតកំណត់"])
+        max_devices = st.number_input("ចំនួនឧបករណ៍អនុញ្ញាត", min_value=1, max_value=20, value=1, step=1)
+        note = st.text_input("ឈ្មោះអតិថិជន / កំណត់ចំណាំ")
+        create_clicked = st.form_submit_button("🔑 Generate Access Code", use_container_width=True)
+    if create_clicked:
+        days_map = {"7 ថ្ងៃ": 7, "30 ថ្ងៃ": 30, "90 ថ្ងៃ": 90, "365 ថ្ងៃ": 365, "មិនផុតកំណត់": 0}
+        code = _create_access_code(days_map[duration_label], note, max_devices)
+        st.session_state.last_created_code = code
+    if st.session_state.get("last_created_code"):
+        st.success("✅ Access Code ថ្មី")
+        st.code(st.session_state.last_created_code, language=None)
+
+    st.markdown("### 👥 បញ្ជី Access Code")
+    with _db_connection() as db:
+        rows = db.execute(
+            """
+            SELECT c.*, COUNT(d.device_id) AS devices
+            FROM access_codes c
+            LEFT JOIN access_devices d ON d.code=c.code
+            GROUP BY c.code
+            ORDER BY c.created_at DESC
+            """
+        ).fetchall()
+    if not rows:
+        st.info("មិនទាន់មាន Access Code ទេ។")
+    for row in rows:
+        status = "🟢 សកម្ម" if int(row["active"]) else "🔴 បានបិទ"
+        expired = row["expires_at"] is not None and int(row["expires_at"]) <= int(time.time())
+        if expired:
+            status = "⌛ ផុតកំណត់"
+        with st.expander(f'{row["code"]} • {status}'):
+            st.write(f'**អតិថិជន:** {row["note"] or "—"}')
+            st.write(f'**ផុតកំណត់:** {_format_expiry(row["expires_at"])}')
+            st.write(f'**ឧបករណ៍:** {row["devices"]}/{row["max_devices"]}')
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                label = "🔒 បិទ" if int(row["active"]) else "🔓 បើក"
+                if st.button(label, key=f'toggle_{row["code"]}', use_container_width=True):
+                    with _db_connection() as db:
+                        db.execute("UPDATE access_codes SET active=? WHERE code=?", (0 if int(row["active"]) else 1, row["code"]))
+                        db.commit()
+                    st.rerun()
+            with c2:
+                if st.button("📱 Reset Device", key=f'reset_{row["code"]}', use_container_width=True):
+                    with _db_connection() as db:
+                        db.execute("DELETE FROM access_devices WHERE code=?", (row["code"],))
+                        db.commit()
+                    st.rerun()
+            with c3:
+                if st.button("🗑️ លុប", key=f'delete_{row["code"]}', use_container_width=True):
+                    with _db_connection() as db:
+                        db.execute("DELETE FROM access_devices WHERE code=?", (row["code"],))
+                        db.execute("DELETE FROM access_codes WHERE code=?", (row["code"],))
+                        db.commit()
+                    st.rerun()
+    st.caption("Admin Link: បន្ថែម ?admin=1 នៅខាងចុងលីងកម្មវិធី។")
+    st.stop()
+
+
 def require_login():
-    """Display the public contact page and stop the private app until login succeeds."""
+    """Require a valid customer access code, or show the admin manager at ?admin=1."""
+    try:
+        admin_mode = str(st.query_params.get("admin", "")).lower() in {"1", "true", "yes"}
+    except Exception:
+        admin_mode = False
+    if admin_mode:
+        render_admin_panel()
+
+    if "device_id" not in st.session_state:
+        st.session_state.device_id = pysecrets.token_urlsafe(24)
+
     if "authenticated" not in st.session_state:
+        token_data = None
         try:
-            st.session_state.authenticated = _auth_token_is_valid(
-                cookie_manager.get(AUTH_COOKIE_NAME)
-            )
+            token_data = _read_auth_token(cookie_manager.get(AUTH_COOKIE_NAME))
         except Exception:
-            st.session_state.authenticated = False
+            token_data = None
+        st.session_state.authenticated = bool(token_data)
+        if token_data:
+            st.session_state.device_id = token_data["device"]
+            st.session_state.access_code = token_data["code"]
 
     if st.session_state.authenticated:
-        return
+        valid, _, _ = _validate_access_code(
+            st.session_state.get("access_code"), st.session_state.get("device_id")
+        )
+        if valid:
+            return
+        _logout_auth()
 
     st.markdown(
         '<div class="hero"><h1>AI KHEMRA BRO</h1>'
         '<p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p>'
         '<div style="margin-top:16px;color:#d8f7ff;font-size:16px;font-weight:700">'
-        'ចុចតំណខាងក្រោម ដើម្បីទាក់ទងម្ចាស់កម្មវិធី</div></div>',
+        'ទាក់ទងម្ចាស់កម្មវិធី ដើម្បីទទួល Access Code</div></div>',
         unsafe_allow_html=True,
     )
     render_contact_buttons("login")
 
-    st.markdown('<div class="section-title">🔐 ចូលប្រើកម្មវិធី</div>', unsafe_allow_html=True)
-    with st.form("secure_login_form", clear_on_submit=False):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        remember = st.checkbox("រក្សាទុកការចូលប្រើ 30 ថ្ងៃ", value=True)
-        submitted = st.form_submit_button("Login", use_container_width=True)
+    st.markdown('<div class="section-title">🔑 បញ្ចូល Access Code</div>', unsafe_allow_html=True)
+    with st.form("access_code_login_form", clear_on_submit=False):
+        access_code = st.text_input("Access Code", placeholder="KHBR-XXXX-XXXX-XXXX")
+        submitted = st.form_submit_button("ចូលប្រើកម្មវិធី", use_container_width=True)
 
     if submitted:
-        expected_user, expected_password = _configured_login()
-        valid = hmac.compare_digest(username.strip(), expected_user) and hmac.compare_digest(
-            password, expected_password
-        )
+        valid, message, row = _validate_access_code(access_code, st.session_state.device_id)
         if valid:
+            normalized = _normalize_access_code(access_code)
             st.session_state.authenticated = True
-            if remember:
-                _save_auth_cookie(expected_user)
+            st.session_state.access_code = normalized
+            _save_auth_cookie(normalized, st.session_state.device_id, row["expires_at"])
             st.rerun()
         else:
-            st.error("❌ Username ឬ Password មិនត្រឹមត្រូវ។")
+            st.error(f"❌ {message}")
 
-    st.caption("អ្នកមិនទាន់ Login មិនអាចប្រើមុខងារបកប្រែ បង្កើត SRT ឬ MP3 បានទេ។")
+    st.link_button("👑 Admin", "?admin=1", use_container_width=True)
+    st.caption("អ្នកមិនទាន់បញ្ចូល Access Code ត្រឹមត្រូវ មិនអាចប្រើមុខងារបកប្រែ SRT ឬ MP3 បានទេ។")
     st.stop()
 
 
