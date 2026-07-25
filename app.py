@@ -143,30 +143,95 @@ div[data-baseweb="popover"] [data-testid="stVerticalBlock"]{
   }
 }
 
-/* Keep the two SRT action buttons side-by-side on every phone orientation. */
+/* One locked split control: a single 100% bar divided 50% / 50%. */
+html, body, [data-testid="stAppViewContainer"], .stApp{
+  overflow-x:hidden!important;
+  width:100%!important;
+  max-width:100vw!important;
+}
+.block-container{
+  width:100%!important;
+  max-width:1180px!important;
+  box-sizing:border-box!important;
+  overflow-x:hidden!important;
+}
+.st-key-srt_actions{
+  width:100%!important;
+  max-width:100%!important;
+  overflow:hidden!important;
+  margin:8px 0 0!important;
+  padding:0!important;
+  border-radius:13px!important;
+  background:#d900ff!important;
+  box-sizing:border-box!important;
+}
 .st-key-srt_actions div[data-testid="stHorizontalBlock"]{
   display:flex!important;
-  flex-direction:row!important;
-  flex-wrap:nowrap!important;
-  gap:8px!important;
+  flex-flow:row nowrap!important;
+  gap:1px!important;
   width:100%!important;
+  max-width:100%!important;
+  margin:0!important;
+  padding:0!important;
+  overflow:hidden!important;
   align-items:stretch!important;
+  box-sizing:border-box!important;
 }
 .st-key-srt_actions div[data-testid="column"]{
-  flex:1 1 0!important;
-  width:50%!important;
+  flex:0 0 calc(50% - .5px)!important;
+  width:calc(50% - .5px)!important;
   min-width:0!important;
+  max-width:calc(50% - .5px)!important;
+  margin:0!important;
+  padding:0!important;
+  overflow:hidden!important;
+  box-sizing:border-box!important;
+}
+.st-key-srt_actions div[data-testid="column"] > div,
+.st-key-srt_actions .stButton,
+.st-key-srt_actions .stDownloadButton{
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  height:100%!important;
+  margin:0!important;
+  padding:0!important;
+  box-sizing:border-box!important;
 }
 .st-key-srt_actions button{
   width:100%!important;
-  min-height:58px!important;
-  padding:.55rem .35rem!important;
-  white-space:normal!important;
-  line-height:1.2!important;
-  font-size:clamp(12px,3.4vw,18px)!important;
+  min-width:0!important;
+  max-width:100%!important;
+  min-height:52px!important;
+  height:52px!important;
+  margin:0!important;
+  padding:5px 3px!important;
+  border:0!important;
+  border-radius:0!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  line-height:1.05!important;
+  font-size:clamp(10px,3vw,16px)!important;
+  box-sizing:border-box!important;
+  background:linear-gradient(90deg,#a51bd4,#ec00ff)!important;
+}
+.st-key-srt_actions div[data-testid="column"]:first-child button{
+  border-radius:12px 0 0 12px!important;
+}
+.st-key-srt_actions div[data-testid="column"]:last-child button{
+  border-radius:0 12px 12px 0!important;
+}
+@media(max-width:430px){
+  .st-key-srt_actions button{
+    height:48px!important;
+    min-height:48px!important;
+    font-size:11px!important;
+    padding:4px 2px!important;
+  }
 }
 @media (orientation:landscape) and (max-height:600px){
-  .st-key-srt_actions button{min-height:52px!important;font-size:15px!important}
+  .st-key-srt_actions button{height:46px!important;min-height:46px!important;font-size:12px!important}
 }
 
 </style>
@@ -1145,7 +1210,7 @@ with tab_video:
         c1, c2 = st.columns([1, 1], gap="small")
         with c1:
             if st.button(
-                "🧠 កែស្លាក និងអក្សរ SRT",
+                "🧠 កែ SRT",
                 key="analyze_thoughts",
                 use_container_width=True,
             ):
@@ -1177,7 +1242,7 @@ with tab_video:
         with c2:
             if st.session_state.srt_text:
                 st.download_button(
-                    "⬇️ ដោនឡូត SRT",
+                    "⬇️ ទាញយក SRT",
                     st.session_state.srt_text.encode("utf-8"),
                     "khmer_story.srt",
                     "application/x-subrip",
@@ -1185,7 +1250,7 @@ with tab_video:
                 )
             else:
                 st.button(
-                    "⬇️ ដោនឡូត SRT",
+                    "⬇️ ទាញយក SRT",
                     disabled=True,
                     key="download_srt_disabled",
                     use_container_width=True,
