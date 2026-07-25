@@ -1,5 +1,6 @@
 import asyncio
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -71,9 +72,13 @@ def clean_srt(text):
     return re.sub(r'\s*```$','',text).strip()
 
 def save_upload(uploaded_file):
-    suffix=Path(uploaded_file.name).suffix or '.mp4'
-    temp=tempfile.NamedTemporaryFile(delete=False,suffix=suffix)
-    temp.write(uploaded_file.getbuffer()); temp.close(); return Path(temp.name)
+    """Save the received MP4 without making another full in-memory copy."""
+    suffix = Path(uploaded_file.name).suffix or '.mp4'
+    uploaded_file.seek(0)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+        shutil.copyfileobj(uploaded_file, temp, length=1024 * 1024)
+        temp.flush()
+        return Path(temp.name)
 
 def video_to_srt(video_path,api_key,model):
     client=genai.Client(api_key=api_key)
