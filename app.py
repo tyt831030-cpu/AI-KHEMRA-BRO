@@ -989,11 +989,9 @@ with tab_video:
     )
 
     if uploaded_video is not None:
+        # Keep the uploaded filename and file size private on-screen.
+        # The file is still available internally for validation and processing.
         size_mb = uploaded_video.size / (1024 * 1024)
-        st.markdown(
-            f'<div class="ok">✅ {uploaded_video.name}<br>📦 {size_mb:.1f} MB</div>',
-            unsafe_allow_html=True,
-        )
 
         if size_mb > max_mb:
             st.error(f"សូមបង្រួមវីដេអូឱ្យតិចជាង {max_mb} MB។")
