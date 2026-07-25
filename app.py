@@ -120,6 +120,7 @@ for key,value in {
     'srt_text':'',
     'pending_srt':'',
     'audio_bytes':None,
+    'pending_editor_update':None,
 }.items():
     if key not in st.session_state:
         st.session_state[key]=value
@@ -234,6 +235,56 @@ def khmer_word_count(text):
     return len([part for part in re.split(r"\s+", (text or "").strip()) if part])
 
 
+def contains_cjk(text):
+    return bool(re.search(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]", text or ""))
+
+
+def normalize_dialogue(text):
+    text = re.sub(r"```|<[^>]+>", "", str(text or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def repair_translation_items(client, model_name, uploaded_video, cues, items):
+    """Retry only missing or still-Chinese cues until every cue is usable Khmer."""
+    by_id = {cue["id"]: cue for cue in cues}
+    for _attempt in range(3):
+        bad_ids = [
+            cue["id"] for cue in cues
+            if cue["id"] not in items
+            or not normalize_dialogue(items[cue["id"]].get("text"))
+            or contains_cjk(items[cue["id"]].get("text"))
+        ]
+        if not bad_ids:
+            return items
+        for offset in range(0, len(bad_ids), 12):
+            group = [by_id[i] for i in bad_ids[offset:offset + 12]]
+            payload = "\n".join(
+                f'ID={cue["id"]} | MAX_WORDS={cue_word_limit(cue["start"], cue["end"])} | SOURCE={cue["source"]}'
+                for cue in group
+            )
+            prompt = TRANSLATE_PROMPT + "\nIMPORTANT: These cues failed before. Translate EVERY cue fully into Khmer. Never copy Chinese characters.\n\nCUES:\n" + payload
+            contents = [uploaded_video, prompt] if uploaded_video is not None else [prompt]
+            response = client.models.generate_content(model=model_name, contents=contents)
+            for row in parse_json_array(response.text or ""):
+                try:
+                    cue_id = int(row.get("id"))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if cue_id not in by_id:
+                    continue
+                tag = str(row.get("tag", "M")).upper().strip()
+                if tag not in VOICE_PROFILES:
+                    tag = items.get(cue_id, {}).get("tag", "M")
+                dialogue = normalize_dialogue(row.get("text"))
+                if dialogue and not contains_cjk(dialogue):
+                    items[cue_id] = {"tag": tag, "text": dialogue}
+    bad_ids = [cue["id"] for cue in cues if cue["id"] not in items or not items[cue["id"]].get("text") or contains_cjk(items[cue["id"]].get("text"))]
+    if bad_ids:
+        raise RuntimeError(f"AI បកប្រែមិនទាន់អស់។ បន្ទាត់មានបញ្ហា៖ {bad_ids[:20]}")
+    return items
+
+
 def refine_translated_cues(client, model_name, uploaded_video, cues, translated):
     """Second pass for stable character tags and short normal-speed dialogue."""
     refined = {}
@@ -297,13 +348,9 @@ def translate_cues(client, model_name, uploaded_video, cues):
             if translated:
                 result_by_id[cue_id] = {"tag": tag, "text": translated}
 
-    missing = [cue["id"] for cue in cues if cue["id"] not in result_by_id]
-    if missing:
-        raise RuntimeError(
-            "AI បកប្រែមិនអស់គ្រប់បន្ទាត់។ សូមចុច Generate ម្តងទៀត។ "
-            f"បាត់បន្ទាត់៖ {missing[:12]}"
-        )
-    return result_by_id
+    return repair_translation_items(
+        client, model_name, uploaded_video, cues, result_by_id
+    )
 
 
 def build_srt(cues, translated):
@@ -329,6 +376,7 @@ def video_to_srt(video_path, api_key, model):
         uploaded_video = upload_for_context(client, video_path)
         translated = translate_cues(client, model, uploaded_video, cues)
         translated = refine_translated_cues(client, model, uploaded_video, cues, translated)
+        translated = repair_translation_items(client, model, uploaded_video, cues, translated)
         result = build_srt(cues, translated)
         if "-->" not in result:
             raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
@@ -422,8 +470,28 @@ def run_async(coro):
     finally:
         loop.close(); asyncio.set_event_loop(None)
 
-async def synthesize(text,profile,output_path):
-    await edge_tts.Communicate(text=text,voice=profile['voice'],rate=profile['rate'],pitch=profile['pitch'],volume=profile['volume']).save(str(output_path))
+async def synthesize(text, profile, output_path):
+    clean_text = normalize_dialogue(text)
+    if not clean_text:
+        raise ValueError('មានបន្ទាត់ SRT ទទេ។')
+    last_error = None
+    attempts = [
+        profile,
+        {**profile, 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+0%'},
+        {'voice': profile.get('voice', PISITH), 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+0%'},
+    ]
+    for current in attempts:
+        try:
+            await edge_tts.Communicate(
+                text=clean_text, voice=current['voice'], rate=current['rate'],
+                pitch=current['pitch'], volume=current['volume']
+            ).save(str(output_path))
+            if output_path.exists() and output_path.stat().st_size > 500:
+                return
+        except Exception as exc:
+            last_error = exc
+            await asyncio.sleep(0.8)
+    raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
 
 def probe_audio_duration(path):
     result = subprocess.run(
@@ -458,6 +526,9 @@ def create_mp3(srt_text):
     cues = parse_srt(srt_text)
     if not cues:
         raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
+    chinese_rows = [i + 1 for i, cue in enumerate(cues) if contains_cjk(cue['text'])]
+    if chinese_rows:
+        raise ValueError(f'SRT នៅមានអក្សរចិននៅបន្ទាត់៖ {chinese_rows[:20]}។ សូម Generate SRT ឡើងវិញ។')
 
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
@@ -663,6 +734,11 @@ with tab_video:
     st.subheader("Generated SRT")
     st.caption("SRT នឹងចូលប្រអប់នេះដោយស្វ័យប្រវត្តិ ពេលដំណើរការដល់ 100%។ អ្នកអាចកែបានមុន Generate MP3។")
 
+    pending_editor_update = st.session_state.pop("pending_editor_update", None)
+    if pending_editor_update is not None:
+        st.session_state.main_srt_editor = pending_editor_update
+        st.session_state.srt_text = pending_editor_update
+
     if "main_srt_editor" not in st.session_state:
         st.session_state.main_srt_editor = st.session_state.srt_text
 
@@ -694,9 +770,8 @@ with tab_video:
                             analysis_video_path,
                         )
                     st.session_state.srt_text = analyzed_srt
-                    st.session_state.main_srt_editor = analyzed_srt
+                    st.session_state.pending_editor_update = analyzed_srt
                     st.session_state.audio_bytes = None
-                    st.success("✅ កែស្លាកតួអង្គ និងកាត់ឃ្លាខ្លីរួចរាល់។ Timestamp នៅដដែល។")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"❌ {exc}")
@@ -739,7 +814,7 @@ with tab_video:
         st.session_state.srt_text = ""
         st.session_state.pending_srt = ""
         st.session_state.audio_bytes = None
-        st.session_state.main_srt_editor = ""
+        st.session_state.pending_editor_update = ""
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -784,7 +859,7 @@ with tab_translate:
                         f'[{item["tag"]}] {item["text"]}'
                     )
                 st.session_state.srt_text = "\n\n".join(blocks)
-                st.session_state.main_srt_editor = st.session_state.srt_text
+                st.session_state.pending_editor_update = st.session_state.srt_text
                 st.success("✅ បកប្រែរួចរាល់ និងរក្សា Timestamp ដើម។")
             except Exception as exc:
                 st.error(f"❌ {exc}")
