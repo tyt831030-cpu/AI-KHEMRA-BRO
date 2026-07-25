@@ -481,18 +481,41 @@ def seconds_to_srt(value):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
 
 
-def extract_audio(video_path, wav_path):
+def optimize_video_for_processing(source_path, output_path):
+    """Create a small 480p proxy to reduce server RAM, disk and Gemini upload size."""
+    result = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(source_path),
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale='min(480,iw)':-2,fps=12",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "32",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-ac", "1", "-ar", "16000", "-b:a", "32k",
+            "-movflags", "+faststart",
+            str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError(result.stderr[-1200:] or "មិនអាចបង្រួមវីដេអូបានទេ។")
+    return output_path
+
+
+def extract_audio(video_path, audio_path):
+    """Extract compact mono 16 kHz FLAC instead of a large uncompressed WAV."""
     result = subprocess.run(
         [
             "ffmpeg", "-y", "-i", str(video_path),
             "-vn", "-ac", "1", "-ar", "16000",
-            "-c:a", "pcm_s16le", str(wav_path),
+            "-c:a", "flac", "-compression_level", "8", str(audio_path),
         ],
         capture_output=True,
         text=True,
         timeout=600,
     )
-    if result.returncode != 0 or not wav_path.exists():
+    if result.returncode != 0 or not audio_path.exists():
         raise RuntimeError(result.stderr[-1200:] or "មិនអាចទាញសំឡេងចេញពីវីដេអូបានទេ។")
 
 
@@ -753,9 +776,20 @@ def video_to_srt(video_path, api_keys, model):
         raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
 
     with tempfile.TemporaryDirectory() as folder:
-        wav_path = Path(folder) / "audio.wav"
-        extract_audio(video_path, wav_path)
-        cues = transcribe_with_whisper(wav_path)
+        folder_path = Path(folder)
+        proxy_path = folder_path / "video_proxy_480p.mp4"
+        audio_path = folder_path / "audio_16k.flac"
+
+        # Convert the large MP4 into a small processing copy. The original file
+        # is used only as a fallback when FFmpeg cannot create the proxy.
+        processing_video = Path(video_path)
+        try:
+            processing_video = optimize_video_for_processing(video_path, proxy_path)
+        except Exception:
+            processing_video = Path(video_path)
+
+        extract_audio(processing_video, audio_path)
+        cues = transcribe_with_whisper(audio_path)
         if not cues:
             raise RuntimeError("Whisper មិនរកឃើញសំឡេងនិយាយក្នុងវីដេអូនេះទេ។")
 
@@ -764,7 +798,7 @@ def video_to_srt(video_path, api_keys, model):
         for api_key in api_keys:
             try:
                 client = genai.Client(api_key=api_key)
-                uploaded_video = upload_for_context(client, video_path)
+                uploaded_video = upload_for_context(client, processing_video)
 
                 # One main translation pass. translate_cues already repairs
                 # missing/Chinese cues, so the old extra full refinement pass
@@ -1141,7 +1175,7 @@ with tab_video:
     uploaded_video = st.file_uploader(
         "Upload Video",
         type=["mp4", "mov", "mkv", "webm"],
-        help="MP4 ត្រូវបានណែនាំសម្រាប់ 4G និងទូរស័ព្ទ។",
+        help="MP4 ត្រូវបានណែនាំ។ App នឹងបង្រួមវីដេអូទៅ 480p ដោយស្វ័យប្រវត្តិ ដើម្បីកាត់បន្ថយ RAM និងល្បឿនដំណើរការ។",
         key=f"main_video_upload_{st.session_state.video_uploader_version}",
     )
 
@@ -1171,6 +1205,7 @@ with tab_video:
                         progress_bar = st.progress(1)
                         progress_text = st.empty()
                         started_at = time.time()
+                        progress_text.markdown("🎞️ កំពុងបង្រួមវីដេអូសម្រាប់ទាញសំឡេង…")
 
                         # Run the AI task in another thread so the page can keep
                         # updating the percentage and elapsed time.
