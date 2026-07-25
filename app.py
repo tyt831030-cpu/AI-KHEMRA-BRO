@@ -21,184 +21,85 @@ st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', 
 
 st.markdown('''
 <style>
-.stApp{background:#080d15;color:#f8fafc}
-.block-container{max-width:1180px;padding-top:1.2rem;padding-bottom:3rem}
-[data-testid="stSidebar"]{background:#101a2c;border-right:1px solid #26364d}
-[data-testid="stSidebar"] .block-container{padding-top:1.1rem}
-.hero{border:2px solid #d900ff;border-radius:24px;padding:34px 18px;text-align:center;background:linear-gradient(145deg,#17171d,#0b1018);box-shadow:0 0 24px rgba(217,0,255,.22);margin-bottom:18px}
-.hero h1{font-size:44px;margin:0 0 8px;font-weight:900}
+:root{
+  --bg:#080d15;
+  --panel:#111827;
+  --panel2:#182438;
+  --text:#f8fafc;
+  --muted:#9ca3af;
+  --cyan:#22d3ee;
+  --pink:#d900ff;
+}
+.stApp{background:var(--bg);color:var(--text)}
+.block-container{max-width:1180px;padding-top:.55rem;padding-bottom:3rem}
+[data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],#MainMenu,footer{display:none!important}
+
+.hero{
+  border:2px solid var(--pink);border-radius:24px;padding:34px 18px;
+  text-align:center;background:linear-gradient(145deg,#17171d,#0b1018);
+  box-shadow:0 0 24px rgba(217,0,255,.22);margin:0 0 18px;
+}
+.hero h1{font-size:44px;margin:0 0 8px;font-weight:900;white-space:nowrap;line-height:1.05}
 .hero p{margin:0;color:#23c8ef;font-weight:800;letter-spacing:1.5px}
-.profile-card{border:2px solid #13c9ef;border-radius:18px;padding:20px 12px;text-align:center;background:#131e31;box-shadow:0 0 16px rgba(19,201,239,.2);margin-bottom:12px}
-.side-ok{background:#073d31;border:1px solid #10b981;border-radius:12px;padding:12px;margin:10px 0}
 .section-title{font-size:30px;font-weight:900;margin:22px 0 10px}
-.step{background:#111b2a;border:1px solid #26374f;border-radius:16px;padding:14px 16px;margin:12px 0}
 .ok{background:#073d31;border:1px solid #10b981;border-radius:14px;padding:13px 15px;margin:10px 0}
-.stButton>button{width:100%;min-height:48px;border:0;border-radius:11px;color:white;font-weight:850;font-size:15px;background:linear-gradient(90deg,#9b1bd1,#ec00ff)}
+.side-ok{background:#073d31;border:1px solid #10b981;border-radius:12px;padding:12px;margin:10px 0}
+.stButton>button{
+  width:100%;min-height:48px;border:0;border-radius:11px;color:white;
+  font-weight:850;font-size:15px;background:linear-gradient(90deg,#9b1bd1,#ec00ff)
+}
 .stDownloadButton>button{width:100%;min-height:46px;border-radius:11px;font-weight:800}
 div[data-testid="stFileUploader"]{background:#eef2f7;border-radius:12px;padding:8px}
-div[data-testid="stTextArea"] textarea{background:#182438!important;color:#fff!important;border:1px solid #8290a4!important;border-radius:10px!important;font-size:16px!important;line-height:1.65!important;font-family:"Noto Sans Khmer","Khmer OS System",Arial,sans-serif!important}
+div[data-testid="stTextArea"] textarea{
+  background:#182438!important;color:#fff!important;border:1px solid #8290a4!important;
+  border-radius:10px!important;font-size:16px!important;line-height:1.65!important;
+  font-family:"Noto Sans Khmer","Khmer OS System",Arial,sans-serif!important
+}
 button[data-baseweb="tab"]{background:#151f31;border-radius:8px 8px 0 0;padding:10px 16px}
-button[data-baseweb="tab"][aria-selected="true"]{background:linear-gradient(90deg,#b000df,#f000ff);color:white}
-.clear-wrap .stButton>button{background:linear-gradient(90deg,#08bce3,#12d6ef);color:#00141b;font-weight:900}
-/* Remove Streamlit's white top bar, GitHub icon, Fork label and menu. */
-[data-testid="stHeader"]{
-display:none!important;
+button[data-baseweb="tab"][aria-selected="true"]{
+  background:linear-gradient(90deg,#b000df,#f000ff);color:white
 }
-[data-testid="stToolbar"],
-[data-testid="stDecoration"],
-[data-testid="stStatusWidget"],
-#MainMenu,
-footer{
-display:none!important;
+.clear-wrap .stButton>button{
+  background:linear-gradient(90deg,#08bce3,#12d6ef);color:#00141b;font-weight:900
 }
 
-/* White sidebar/API arrow on a black button, fixed at the top-left corner. */
-[data-testid="stSidebarCollapsedControl"]{
-position:fixed!important;
-top:8px!important;
-left:8px!important;
-right:auto!important;
-z-index:999999!important;
-width:42px!important;
-height:38px!important;
-display:flex!important;
-align-items:center!important;
-justify-content:center!important;
+/* One stable professional menu button: white 3-line icon on black. */
+.st-key-api_menu_container{
+  position:fixed!important;top:7px!important;left:7px!important;
+  z-index:1000000!important;width:44px!important;
 }
-[data-testid="stSidebarCollapsedControl"] button{
-width:42px!important;
-height:38px!important;
-min-height:38px!important;
-padding:0!important;
-border-radius:11px!important;
-background:#050505!important;
-border:1px solid #2a2a2a!important;
-box-shadow:0 3px 12px rgba(0,0,0,.45)!important;
-display:flex!important;
-align-items:center!important;
-justify-content:center!important;
-opacity:1!important;
+.st-key-api_menu_container [data-testid="stPopover"]>button{
+  width:44px!important;height:40px!important;min-height:40px!important;
+  padding:0!important;border-radius:11px!important;background:#050505!important;
+  border:1px solid #3f3f46!important;box-shadow:0 3px 12px rgba(0,0,0,.45)!important;
+  color:#fff!important;font-size:0!important;
 }
-[data-testid="stSidebarCollapsedControl"] button:hover{
-background:#111111!important;
-border-color:#ffffff!important;
+.st-key-api_menu_container [data-testid="stPopover"]>button::after{
+  content:"☰";font-size:25px!important;font-weight:900!important;
+  color:#fff!important;line-height:1!important;
 }
-[data-testid="stSidebarCollapsedControl"] svg{
-display:block!important;
-width:22px!important;
-height:22px!important;
-color:#ffffff!important;
-fill:#ffffff!important;
-stroke:#ffffff!important;
-opacity:1!important;
+.st-key-api_menu_container [data-testid="stPopover"]>button:hover{
+  background:#111!important;border-color:#fff!important
 }
-
-/* Let the branded app header begin at the very top of the phone. */
-.block-container{
-padding-top:.45rem!important;
+div[data-baseweb="popover"]{
+  z-index:1000001!important;
 }
-.hero{
-margin-top:0!important;
-width:100%!important;
-box-sizing:border-box!important;
-overflow:hidden!important;
-}
-.hero h1{
-white-space:nowrap!important;
-line-height:1.05!important;
-}
-.hero p{
-white-space:normal!important;
-overflow-wrap:anywhere!important;
+div[data-baseweb="popover"] [data-testid="stVerticalBlock"]{
+  min-width:min(88vw,390px);
 }
 
 @media(max-width:700px){
-.block-container{
-padding-left:.55rem!important;
-padding-right:.55rem!important;
-padding-top:.35rem!important;
+  .block-container{padding-left:.55rem!important;padding-right:.55rem!important;padding-top:.35rem!important}
+  .hero{padding:28px 8px 24px!important;border-radius:18px!important;margin-bottom:14px!important}
+  .hero h1{font-size:clamp(28px,9vw,42px)!important;letter-spacing:-1px!important}
+  .hero p{font-size:clamp(9px,2.7vw,12px)!important;letter-spacing:.8px!important;line-height:1.35!important}
+  .section-title{font-size:26px}
+  .st-key-api_menu_container{top:5px!important;left:5px!important;width:42px!important}
+  .st-key-api_menu_container [data-testid="stPopover"]>button{
+    width:42px!important;height:38px!important;min-height:38px!important
+  }
 }
-.hero{
-padding:28px 8px 24px!important;
-border-radius:18px!important;
-margin-bottom:14px!important;
-}
-.hero h1{
-font-size:clamp(28px,9vw,42px)!important;
-letter-spacing:-1px!important;
-}
-.hero p{
-font-size:clamp(9px,2.7vw,12px)!important;
-letter-spacing:.8px!important;
-line-height:1.35!important;
-padding:0 6px!important;
-}
-.section-title{font-size:26px}
-[data-testid="stSidebarCollapsedControl"]{
-top:6px!important;
-left:6px!important;
-right:auto!important;
-width:40px!important;
-height:36px!important;
-}
-[data-testid="stSidebarCollapsedControl"] button{
-width:40px!important;
-height:36px!important;
-min-height:36px!important;
-border-radius:10px!important;
-}
-[data-testid="stSidebarCollapsedControl"] svg{
-width:21px!important;
-height:21px!important;
-}
-}
-
-/* Custom API button: always visible on mobile, independent of Streamlit sidebar control. */
-.st-key-open_api_panel{
-position:fixed!important;
-top:8px!important;
-left:8px!important;
-z-index:1000000!important;
-width:44px!important;
-height:40px!important;
-}
-.st-key-open_api_panel .stButton{
-width:44px!important;
-height:40px!important;
-}
-.st-key-open_api_panel .stButton>button{
-width:44px!important;
-height:40px!important;
-min-height:40px!important;
-padding:0!important;
-border-radius:11px!important;
-background:#050505!important;
-border:1px solid #3f3f46!important;
-box-shadow:0 3px 12px rgba(0,0,0,.45)!important;
-color:#ffffff!important;
-font-size:27px!important;
-font-weight:900!important;
-line-height:1!important;
-}
-.st-key-open_api_panel .stButton>button:hover{
-background:#111111!important;
-border-color:#ffffff!important;
-}
-@media(max-width:700px){
-.st-key-open_api_panel{
-top:6px!important;
-left:6px!important;
-width:42px!important;
-height:38px!important;
-}
-.st-key-open_api_panel .stButton,
-.st-key-open_api_panel .stButton>button{
-width:42px!important;
-height:38px!important;
-min-height:38px!important;
-}
-}
-
 </style>
 ''', unsafe_allow_html=True)
 
@@ -365,9 +266,6 @@ def clear_private_user_session():
 def load_whisper_model():
     # Base + int8 is selected so it can run on Streamlit Community Cloud CPU.
     return WhisperModel("base", device="cpu", compute_type="int8")
-
-if "api_keys_manager" not in st.session_state:
-    st.session_state.api_keys_manager = load_private_api_keys()
 
 for key,value in {
     'srt_text':'',
@@ -874,73 +772,90 @@ def create_mp3(srt_text):
         return output.read_bytes()
 
 
-@st.dialog("🔑 Gemini API Key")
-def show_api_key_dialog():
-    st.caption("API Key នេះរក្សាទុកឯកជនតែលើទូរសព្ទ/Browser របស់អ្នក។")
-    st.text_area(
-        "បញ្ចូល Gemini API Key",
-        height=130,
-        placeholder="AIza...",
-        key="api_keys_manager",
-        on_change=api_keys_changed,
-        help="អាចដាក់ API Key មួយ ឬច្រើន ដោយមួយបន្ទាត់មួយសោ។",
-    )
 
-    current_keys = [
-        line.strip()
-        for line in st.session_state.get("api_keys_manager", "").splitlines()
-        if line.strip()
-    ]
+# Read this browser's saved key once per Streamlit session.
+if "api_keys_manager" not in st.session_state:
+    st.session_state.api_keys_manager = load_private_api_keys()
 
-    if current_keys:
-        save_private_api_keys(st.session_state.api_keys_manager)
-        st.success(f"✅ បានរក្សាទុក {len(current_keys)} API Key សម្រាប់ទូរសព្ទនេះ")
-    else:
-        st.warning("សូមបញ្ចូល API Key ដើម្បីប្រើការបកប្រែ។")
+# Defaults are per user/session; no user's working data is shared with another.
+for state_key, default_value in {
+    "target_language": "Khmer (ខ្មែរ)",
+    "translation_style": "🔴 Chinese Drama Pro",
+    "model_selector": "gemini-2.5-flash",
+    "lite_mode": True,
+    "api_saved_notice": False,
+}.items():
+    if state_key not in st.session_state:
+        st.session_state[state_key] = default_value
 
-    if st.button("🚪 លុប API Key ចេញពីទូរសព្ទនេះ", key="dialog_logout"):
-        clear_private_user_session()
-        st.rerun()
+with st.container(key="api_menu_container"):
+    with st.popover("Menu", help="API Key និងការកំណត់កម្មវិធី"):
+        st.markdown("### 🔑 API Key និងការកំណត់")
+        st.caption("ទូរសព្ទ/Browser នីមួយៗមាន API Key និងឯកសារផ្ទាល់ខ្លួន។")
 
+        st.text_area(
+            "Gemini API Key",
+            height=120,
+            placeholder="AIza...",
+            key="api_keys_manager",
+            help="អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ។",
+        )
 
-if st.button("»", key="open_api_panel", help="បើកកន្លែងដាក់ API Key"):
-    show_api_key_dialog()
+        save_col, logout_col = st.columns(2)
+        with save_col:
+            if st.button("💾 រក្សាទុក", key="save_api_keys", use_container_width=True):
+                entered_keys = [
+                    line.strip()
+                    for line in st.session_state.api_keys_manager.splitlines()
+                    if line.strip()
+                ]
+                if entered_keys:
+                    save_private_api_keys(st.session_state.api_keys_manager)
+                    st.session_state.api_saved_notice = True
+                    st.rerun()
+                else:
+                    st.warning("សូមបញ្ចូល API Key ជាមុន។")
 
+        with logout_col:
+            if st.button("🗑️ លុបសោ", key="remove_api_keys", use_container_width=True):
+                clear_private_user_session()
+                st.rerun()
 
-with st.sidebar:
-    st.markdown(
-        '<div class="profile-card">👋 <b>AI KHEMRA BRO</b><br><small>ROLE: ADMIN</small><br><br>🗓️ PLAN: LIFETIME<br>💎 PRO</div>',
-        unsafe_allow_html=True,
-    )
-    if st.button("🚪 ចាកចេញ (Logout)", key="logout"):
-        clear_private_user_session()
-        st.rerun()
+        current_keys = [
+            line.strip()
+            for line in st.session_state.get("api_keys_manager", "").splitlines()
+            if line.strip()
+        ]
+        if current_keys:
+            st.success(f"✅ API Key ត្រៀមប្រើ៖ {len(current_keys)}")
+            if COOKIE_SECRET_CONFIGURED:
+                st.caption("🔒 បានអ៊ិនគ្រីប និងរក្សាទុកសម្រាប់ Browser នេះ។")
+            else:
+                st.caption("⚠️ សោនៅក្នុង Session នេះ។ ដាក់ COOKIE_SECRET ក្នុង Streamlit Secrets ដើម្បីចងចាំក្រោយ Server restart។")
+        else:
+            st.info("បញ្ចូល API Key រួចចុច «រក្សាទុក»។")
 
-    st.markdown("---")
-    st.subheader("🌍 Target Language")
-    st.selectbox("ជ្រើសភាសា", ["Khmer (ខ្មែរ)"], key="target_language")
-
-    st.markdown("---")
-    st.subheader("🎭 Translation Style")
-    translation_style = st.radio(
-        "ជ្រើសរបៀបបកប្រែ",
-        ["🔴 Chinese Drama Pro", "⚪ Whisper Timestamp Sync", "⚪ Standard"],
-        key="translation_style",
-    )
-
-    st.markdown("---")
-    model = st.selectbox(
-        "Model",
-        ["gemini-2.5-flash", "gemini-2.5-pro"],
-        key="model_selector",
-    )
-    lite_mode = st.toggle("📶 4G Lite Mode", value=True)
-    max_mb = 60 if lite_mode else 150
-    st.caption(f"ណែនាំវីដេអូមិនលើស {max_mb} MB")
+        st.divider()
+        st.selectbox("🌍 Target Language", ["Khmer (ខ្មែរ)"], key="target_language")
+        st.radio(
+            "🎭 Translation Style",
+            ["🔴 Chinese Drama Pro", "⚪ Whisper Timestamp Sync", "⚪ Standard"],
+            key="translation_style",
+        )
+        st.selectbox(
+            "🤖 Model",
+            ["gemini-2.5-flash", "gemini-2.5-pro"],
+            key="model_selector",
+        )
+        st.toggle("📶 4G Lite Mode", key="lite_mode")
 
 api_keys_text = st.session_state.get("api_keys_manager", "")
-valid_api_keys = [x.strip() for x in api_keys_text.splitlines() if x.strip()]
+valid_api_keys = [line.strip() for line in api_keys_text.splitlines() if line.strip()]
 api_key = valid_api_keys[0] if valid_api_keys else ""
+translation_style = st.session_state.translation_style
+model = st.session_state.model_selector
+lite_mode = st.session_state.lite_mode
+max_mb = 60 if lite_mode else 150
 
 st.markdown(
     '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
@@ -976,7 +891,7 @@ with tab_video:
 
             if st.button("📝 Generate Khmer SRT", key="generate_srt"):
                 if not api_key:
-                    st.error("សូមចុចប៊ូតុង » នៅជ្រុងខាងលើឆ្វេង ហើយបញ្ចូល Gemini API Key ជាមុន។")
+                    st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
                 else:
                     video_path = save_upload(uploaded_video)
                     try:
@@ -1067,7 +982,7 @@ with tab_video:
             if not st.session_state.srt_text.strip():
                 st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
             elif not api_key:
-                st.error("សូមចុចប៊ូតុង » នៅជ្រុងខាងលើឆ្វេង ហើយបញ្ចូល Gemini API Key ជាមុន។")
+                st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
             else:
                 analysis_video_path = None
                 try:
@@ -1178,7 +1093,7 @@ with tab_translate:
         if not source_srt.strip():
             st.warning("សូមបញ្ចូល Chinese SRT។")
         elif not api_key:
-            st.error("សូមបញ្ចូល Gemini API Key នៅ Sidebar។")
+            st.error("សូមចុចប៊ូតុង ☰ បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
         else:
             try:
                 source_cues = srt_to_structured_cues(source_srt)
