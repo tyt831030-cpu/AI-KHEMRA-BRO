@@ -64,8 +64,13 @@ Rules:
 6. No markdown fences or explanations.
 7. No Chinese characters in the Khmer dialogue.'''
 
-for key,value in {'srt_text':'','audio_bytes':None}.items():
-    if key not in st.session_state: st.session_state[key]=value
+for key,value in {
+    'srt_text':'',
+    'pending_srt':'',
+    'audio_bytes':None,
+}.items():
+    if key not in st.session_state:
+        st.session_state[key]=value
 
 def clean_srt(text):
     text=re.sub(r'^```(?:srt)?\s*','',text.strip(),flags=re.I)
@@ -231,7 +236,7 @@ with tab_video:
                             st.write("📤 Uploading video...")
                             st.write("🎧 Listening to Chinese dialogue...")
                             st.write("🌐 Translating into natural Khmer...")
-                            st.session_state.srt_text = video_to_srt(video_path, api_key, model)
+                            st.session_state.pending_srt = video_to_srt(video_path, api_key, model)
                             st.session_state.audio_bytes = None
                             status.update(label="✅ Khmer SRT ready", state="complete")
                     except Exception as exc:
@@ -239,15 +244,30 @@ with tab_video:
                     finally:
                         video_path.unlink(missing_ok=True)
 
+    if st.session_state.pending_srt:
+        if st.button(
+            "📥 ទាញអក្សរខ្មែរ SRT ចូលប្រអប់",
+            key="pull_generated_srt",
+            use_container_width=True,
+        ):
+            st.session_state.srt_text = st.session_state.pending_srt
+            st.session_state.main_srt_editor = st.session_state.pending_srt
+            st.session_state.pending_srt = ""
+            st.rerun()
+
     st.subheader("Generated SRT")
     st.caption("You can edit the SRT here before generating audio:")
-    st.session_state.srt_text = st.text_area(
+
+    if "main_srt_editor" not in st.session_state:
+        st.session_state.main_srt_editor = st.session_state.srt_text
+
+    st.text_area(
         "SRT Editor",
-        value=st.session_state.srt_text,
         height=360,
         label_visibility="collapsed",
         key="main_srt_editor",
     )
+    st.session_state.srt_text = st.session_state.main_srt_editor
 
     c1, c2 = st.columns([1, 1])
     with c1:
@@ -290,7 +310,9 @@ with tab_video:
     st.markdown('<div class="clear-wrap">', unsafe_allow_html=True)
     if st.button("🗑️ សម្អាត (Clear Video Project)", key="clear_project"):
         st.session_state.srt_text = ""
+        st.session_state.pending_srt = ""
         st.session_state.audio_bytes = None
+        st.session_state.main_srt_editor = ""
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
