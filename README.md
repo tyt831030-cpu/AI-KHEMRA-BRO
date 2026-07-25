@@ -24,3 +24,11 @@ Upload all files to the root of the existing GitHub repository and commit. Strea
 - Normalizes output to social-media-friendly loudness.
 - Prevents generated character voices from overlapping.
 - Uses subtle age/child pitch settings to reduce robotic sound.
+
+
+## Multi-user privacy
+- Every phone/browser has its own Streamlit session, SRT, MP3, upload and API key.
+- API keys are never stored in one shared server file.
+- API keys are encrypted before being stored in that browser's cookie.
+- Add COOKIE_SECRET in Streamlit Community Cloud Secrets for persistence after server restarts.
+- Press Logout to remove only that phone/browser's saved API key and active project.
