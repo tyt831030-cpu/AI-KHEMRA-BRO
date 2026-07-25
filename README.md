@@ -10,3 +10,10 @@ This version keeps the existing UI and changes the processing pipeline:
 6. Edge TTS creates the synchronized MP3.
 
 Upload all files to the root of the existing GitHub repository and commit. Streamlit Cloud installs FFmpeg from `packages.txt`. The first run downloads the Whisper base model and can take longer.
+
+
+## Short Dialogue & Voice Fix
+- Stable speaker/role second pass
+- THINK only for unheard inner monologue
+- Short Khmer dialogue based on cue duration
+- Natural-speed MP3 without aggressive time compression
