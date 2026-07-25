@@ -1,5 +1,7 @@
-# AI KHEMRA BRO — Full Width Generate Button
+# AI KHEMRA BRO — Low RAM Video Processing
 
-- Generate Khmer SRT button now spans the full content width.
-- It aligns with the progress bar on portrait and landscape mobile screens.
-- Existing app functions are preserved.
+- Streams the uploaded file to disk without an extra full Python byte copy.
+- Creates a temporary 480p / 12fps / low-bitrate proxy for processing.
+- Extracts mono 16 kHz FLAC instead of a large PCM WAV.
+- Uses the smaller proxy for Gemini context upload.
+- Temporary proxy/audio files are removed automatically.
