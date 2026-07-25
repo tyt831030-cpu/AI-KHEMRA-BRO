@@ -152,6 +152,53 @@ width:21px!important;
 height:21px!important;
 }
 }
+
+/* Custom API button: always visible on mobile, independent of Streamlit sidebar control. */
+.st-key-open_api_panel{
+position:fixed!important;
+top:8px!important;
+left:8px!important;
+z-index:1000000!important;
+width:44px!important;
+height:40px!important;
+}
+.st-key-open_api_panel .stButton{
+width:44px!important;
+height:40px!important;
+}
+.st-key-open_api_panel .stButton>button{
+width:44px!important;
+height:40px!important;
+min-height:40px!important;
+padding:0!important;
+border-radius:11px!important;
+background:#050505!important;
+border:1px solid #3f3f46!important;
+box-shadow:0 3px 12px rgba(0,0,0,.45)!important;
+color:#ffffff!important;
+font-size:27px!important;
+font-weight:900!important;
+line-height:1!important;
+}
+.st-key-open_api_panel .stButton>button:hover{
+background:#111111!important;
+border-color:#ffffff!important;
+}
+@media(max-width:700px){
+.st-key-open_api_panel{
+top:6px!important;
+left:6px!important;
+width:42px!important;
+height:38px!important;
+}
+.st-key-open_api_panel .stButton,
+.st-key-open_api_panel .stButton>button{
+width:42px!important;
+height:38px!important;
+min-height:38px!important;
+}
+}
+
 </style>
 ''', unsafe_allow_html=True)
 
@@ -827,6 +874,39 @@ def create_mp3(srt_text):
         return output.read_bytes()
 
 
+@st.dialog("🔑 Gemini API Key")
+def show_api_key_dialog():
+    st.caption("API Key នេះរក្សាទុកឯកជនតែលើទូរសព្ទ/Browser របស់អ្នក។")
+    st.text_area(
+        "បញ្ចូល Gemini API Key",
+        height=130,
+        placeholder="AIza...",
+        key="api_keys_manager",
+        on_change=api_keys_changed,
+        help="អាចដាក់ API Key មួយ ឬច្រើន ដោយមួយបន្ទាត់មួយសោ។",
+    )
+
+    current_keys = [
+        line.strip()
+        for line in st.session_state.get("api_keys_manager", "").splitlines()
+        if line.strip()
+    ]
+
+    if current_keys:
+        save_private_api_keys(st.session_state.api_keys_manager)
+        st.success(f"✅ បានរក្សាទុក {len(current_keys)} API Key សម្រាប់ទូរសព្ទនេះ")
+    else:
+        st.warning("សូមបញ្ចូល API Key ដើម្បីប្រើការបកប្រែ។")
+
+    if st.button("🚪 លុប API Key ចេញពីទូរសព្ទនេះ", key="dialog_logout"):
+        clear_private_user_session()
+        st.rerun()
+
+
+if st.button("»", key="open_api_panel", help="បើកកន្លែងដាក់ API Key"):
+    show_api_key_dialog()
+
+
 with st.sidebar:
     st.markdown(
         '<div class="profile-card">👋 <b>AI KHEMRA BRO</b><br><small>ROLE: ADMIN</small><br><br>🗓️ PLAN: LIFETIME<br>💎 PRO</div>',
@@ -839,28 +919,6 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🌍 Target Language")
     st.selectbox("ជ្រើសភាសា", ["Khmer (ខ្មែរ)"], key="target_language")
-
-    st.markdown("---")
-    st.subheader("🔑 API Keys Manager")
-    api_keys_text = st.text_area(
-        "Paste Gemini API Keys (One per line)",
-        height=130,
-        placeholder="AIza...\nAIza...",
-        key="api_keys_manager",
-        on_change=api_keys_changed,
-        help="API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកតែលើ browser/ទូរសព្ទនេះ។ អ្នកប្រើផ្សេងមិនអាចមើលឃើញបានទេ។",
-    )
-    valid_api_keys = [x.strip() for x in api_keys_text.splitlines() if x.strip()]
-    if valid_api_keys:
-        # Save only to this user's encrypted browser cookie.
-        save_private_api_keys(api_keys_text)
-        st.markdown(
-            f'<div class="side-ok">✅ រកឃើញ {len(valid_api_keys)} Keys'
-            '<br><small>🔒 ឯកជនសម្រាប់ទូរសព្ទនេះ — មិនចែករំលែកជាមួយអ្នកដទៃ</small></div>',
-            unsafe_allow_html=True,
-        )
-        if not COOKIE_SECRET_CONFIGURED:
-            st.caption("⚠️ ដើម្បីឱ្យ API Key នៅក្រោយ Server restart សូមដាក់ COOKIE_SECRET ក្នុង Streamlit Secrets។")
 
     st.markdown("---")
     st.subheader("🎭 Translation Style")
@@ -880,6 +938,8 @@ with st.sidebar:
     max_mb = 60 if lite_mode else 150
     st.caption(f"ណែនាំវីដេអូមិនលើស {max_mb} MB")
 
+api_keys_text = st.session_state.get("api_keys_manager", "")
+valid_api_keys = [x.strip() for x in api_keys_text.splitlines() if x.strip()]
 api_key = valid_api_keys[0] if valid_api_keys else ""
 
 st.markdown(
@@ -916,7 +976,7 @@ with tab_video:
 
             if st.button("📝 Generate Khmer SRT", key="generate_srt"):
                 if not api_key:
-                    st.error("សូមបញ្ចូល Gemini API Key នៅ Sidebar ជាមុន។")
+                    st.error("សូមចុចប៊ូតុង » នៅជ្រុងខាងលើឆ្វេង ហើយបញ្ចូល Gemini API Key ជាមុន។")
                 else:
                     video_path = save_upload(uploaded_video)
                     try:
@@ -1007,7 +1067,7 @@ with tab_video:
             if not st.session_state.srt_text.strip():
                 st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
             elif not api_key:
-                st.error("សូមបញ្ចូល Gemini API Key នៅ Sidebar ជាមុន។")
+                st.error("សូមចុចប៊ូតុង » នៅជ្រុងខាងលើឆ្វេង ហើយបញ្ចូល Gemini API Key ជាមុន។")
             else:
                 analysis_video_path = None
                 try:
