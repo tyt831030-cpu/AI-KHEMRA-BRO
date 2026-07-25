@@ -46,20 +46,21 @@ button[data-baseweb="tab"][aria-selected="true"]{background:linear-gradient(90de
 PISITH='km-KH-PisethNeural'
 SREYMOM='km-KH-SreymomNeural'
 VOICE_PROFILES={
-'M':{'voice':PISITH,'rate':'+0%','pitch':'+0Hz','volume':'+0%'},
-'F':{'voice':SREYMOM,'rate':'+0%','pitch':'+0Hz','volume':'+0%'},
-'BOY':{'voice':PISITH,'rate':'+8%','pitch':'+24Hz','volume':'+0%'},
-'GIRL':{'voice':SREYMOM,'rate':'+8%','pitch':'+28Hz','volume':'+0%'},
-'OLD_M':{'voice':PISITH,'rate':'-12%','pitch':'-18Hz','volume':'-2%'},
-'OLD_F':{'voice':SREYMOM,'rate':'-12%','pitch':'-15Hz','volume':'-2%'},
-'M_THINK':{'voice':PISITH,'rate':'-8%','pitch':'-8Hz','volume':'-12%'},
-'F_THINK':{'voice':SREYMOM,'rate':'-8%','pitch':'-6Hz','volume':'-12%'},
-'NARRATOR_M':{'voice':PISITH,'rate':'-3%','pitch':'-3Hz','volume':'+0%'},
-'NARRATOR_F':{'voice':SREYMOM,'rate':'-3%','pitch':'-2Hz','volume':'+0%'}}
+'M':{'voice':PISITH,'rate':'-4%','pitch':'+0Hz','volume':'+0%'},
+'F':{'voice':SREYMOM,'rate':'-4%','pitch':'+0Hz','volume':'+0%'},
+'BOY':{'voice':PISITH,'rate':'-1%','pitch':'+14Hz','volume':'+0%'},
+'GIRL':{'voice':SREYMOM,'rate':'-1%','pitch':'+16Hz','volume':'+0%'},
+'OLD_M':{'voice':PISITH,'rate':'-9%','pitch':'-10Hz','volume':'-1%'},
+'OLD_F':{'voice':SREYMOM,'rate':'-9%','pitch':'-9Hz','volume':'-1%'},
+'M_THINK':{'voice':PISITH,'rate':'-8%','pitch':'-4Hz','volume':'-5%'},
+'F_THINK':{'voice':SREYMOM,'rate':'-8%','pitch':'-3Hz','volume':'-5%'},
+'NARRATOR_M':{'voice':PISITH,'rate':'-6%','pitch':'-2Hz','volume':'+0%'},
+'NARRATOR_F':{'voice':SREYMOM,'rate':'-6%','pitch':'-1Hz','volume':'+0%'}
+}
 
-TRANSLATE_PROMPT = """You are an expert Chinese-drama translator and dubbing director.
+TRANSLATE_PROMPT = """You are an expert Chinese-drama Khmer dubbing translator and character continuity editor.
 The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
-Use the uploaded video only to understand dialogue, visible speaker, age, gender, narration, and inner thoughts.
+Use the uploaded video to identify the visible speaker, voice source, age, gender, narration, and inner thought.
 
 Return a JSON array only. Each object must contain exactly:
 {"id": integer, "tag": string, "text": string}
@@ -67,20 +68,30 @@ Return a JSON array only. Each object must contain exactly:
 Allowed tags:
 M, F, BOY, GIRL, OLD_M, OLD_F, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
 
-Rules:
-- Return exactly one object for every supplied cue ID, in the same order.
-- Translate into natural spoken Khmer suitable for Chinese drama dubbing.
-- Preserve meaning, emotion, names, ranks, relationships and pronouns.
-- Use M_THINK/F_THINK only for unheard inner monologue.
-- Use BOY/GIRL only for children; OLD_M/OLD_F only for elderly speakers.
-- Use NARRATOR_M/NARRATOR_F only for narration.
+SPEAKER RULES:
+- Assign the tag from the person who is actually speaking, not merely the person visible on screen.
+- Keep the same recurring character on the same adult/child/elderly and male/female tag across nearby cues.
+- Use M or F for ordinary spoken dialogue, including calm and light scenes.
+- Use M_THINK or F_THINK only when the line is an unheard inner thought or internal monologue.
+- Use NARRATOR tags only for off-screen narration that is not a character thought.
+- Use child and elderly tags only when clearly supported by voice and visual context.
+- Do not classify a whisper, calm speech, or sad speech as inner thought unless it is not spoken aloud.
+
+KHMER LENGTH RULES:
+- Translate into short, natural spoken Khmer, not formal writing and not word-for-word translation.
+- Each cue includes MAX_WORDS. The Khmer text MUST stay at or below that word limit.
+- Preserve the core meaning, emotion, names, ranks, relationship, and pronouns while removing repetition and filler.
+- Prefer one concise spoken sentence. Never add explanations.
 - No Chinese characters in the Khmer text.
+
+OUTPUT RULES:
+- Return exactly one object for every supplied cue ID in the same order.
 - Never invent, merge, split, omit, or renumber cues.
 - JSON only. No markdown fences or explanation.
 """
 
-ANALYZE_PROMPT = """You are a Chinese-drama Khmer dubbing editor.
-Improve the supplied Khmer SRT dialogue and classify speakers, while preserving every cue number and timestamp exactly.
+ANALYZE_PROMPT = """You are a Chinese-drama Khmer dubbing continuity editor.
+Review the supplied fixed-timestamp cues using the video context.
 Return a JSON array only with exactly:
 {"id": integer, "tag": string, "text": string}
 
@@ -90,10 +101,14 @@ M, F, BOY, GIRL, OLD_M, OLD_F, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
 Rules:
 - Return exactly one object per cue ID in the same order.
 - Do not alter timestamps, cue count, or cue order.
-- Correct incomplete or awkward Khmer into natural spoken Khmer.
-- Keep character identity consistent across nearby cues.
-- Detect inner thought, narrator, adult, child, and elderly roles from context.
-- Do not add explanations or markdown.
+- Keep recurring character identity and tag consistent across nearby cues.
+- Ordinary audible dialogue must remain M or F, even when calm, soft, sad, angry, or whispering.
+- Use THINK only for unheard internal monologue; use NARRATOR only for true narration.
+- Use BOY/GIRL and OLD_M/OLD_F only when age is clearly supported.
+- Rewrite Khmer into concise, natural spoken dialogue.
+- Respect each cue's MAX_WORDS strictly so dubbing can play at a normal pace.
+- Preserve meaning and emotion but remove repeated, explanatory, or unnecessary words.
+- JSON only. No explanations or markdown.
 """
 
 @st.cache_resource(show_spinner=False)
@@ -208,6 +223,52 @@ def parse_json_array(raw_text):
     return value
 
 
+def cue_word_limit(start, end):
+    """Conservative Khmer spoken-word budget for natural dubbing speed."""
+    duration = max(0.35, float(end) - float(start))
+    # Roughly 2.0 short Khmer words per second, with a small minimum.
+    return max(2, min(18, int(duration * 2.0 + 0.5)))
+
+
+def khmer_word_count(text):
+    return len([part for part in re.split(r"\s+", (text or "").strip()) if part])
+
+
+def refine_translated_cues(client, model_name, uploaded_video, cues, translated):
+    """Second pass for stable character tags and short normal-speed dialogue."""
+    refined = {}
+    batch_size = 35
+    for offset in range(0, len(cues), batch_size):
+        batch = cues[offset:offset + batch_size]
+        lines = []
+        for cue in batch:
+            item = translated[cue["id"]]
+            lines.append(
+                f'ID={cue["id"]} | TIME={seconds_to_srt(cue["start"])} --> '
+                f'{seconds_to_srt(cue["end"])} | MAX_WORDS={cue_word_limit(cue["start"], cue["end"])} '
+                f'| CURRENT_TAG={item["tag"]} | SOURCE={cue["source"]} | KHMER={item["text"]}'
+            )
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[uploaded_video, ANALYZE_PROMPT + "\n\nCUES:\n" + "\n".join(lines)],
+        )
+        for item in parse_json_array(response.text or ""):
+            try:
+                cue_id = int(item.get("id"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            tag = str(item.get("tag", "M")).upper().strip()
+            if tag not in VOICE_PROFILES:
+                tag = translated.get(cue_id, {}).get("tag", "M")
+            dialogue = str(item.get("text", "")).strip()
+            if dialogue:
+                refined[cue_id] = {"tag": tag, "text": dialogue}
+
+    for cue in cues:
+        refined.setdefault(cue["id"], translated[cue["id"]])
+    return refined
+
+
 def translate_cues(client, model_name, uploaded_video, cues):
     result_by_id = {}
     batch_size = 30
@@ -215,7 +276,8 @@ def translate_cues(client, model_name, uploaded_video, cues):
         batch = cues[offset:offset + batch_size]
         cue_lines = "\n".join(
             f"ID={cue['id']} | {seconds_to_srt(cue['start'])} --> "
-            f"{seconds_to_srt(cue['end'])} | SOURCE={cue['source']}"
+            f"{seconds_to_srt(cue['end'])} | MAX_WORDS={cue_word_limit(cue['start'], cue['end'])} "
+            f"| SOURCE={cue['source']}"
             for cue in batch
         )
         response = client.models.generate_content(
@@ -266,6 +328,7 @@ def video_to_srt(video_path, api_key, model):
         client = genai.Client(api_key=api_key)
         uploaded_video = upload_for_context(client, video_path)
         translated = translate_cues(client, model, uploaded_video, cues)
+        translated = refine_translated_cues(client, model, uploaded_video, cues, translated)
         result = build_srt(cues, translated)
         if "-->" not in result:
             raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
@@ -301,7 +364,9 @@ def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
     for offset in range(0, len(cues), batch_size):
         batch = cues[offset:offset + batch_size]
         payload = "\n".join(
-            f'ID={cue["id"]} | TAG={cue["tag"]} | TEXT={cue["text"]}'
+            f'ID={cue["id"]} | TIME={ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])} '
+            f'| MAX_WORDS={cue_word_limit(cue["start_ms"] / 1000.0, cue["end_ms"] / 1000.0)} '
+            f'| TAG={cue["tag"]} | TEXT={cue["text"]}'
             for cue in batch
         )
         contents = [ANALYZE_PROMPT + "\n\nCUES:\n" + payload]
@@ -412,34 +477,26 @@ def create_mp3(srt_text):
 
         filters = []
         labels = []
+        final_end_ms = 0
 
         for index, cue in enumerate(cues):
-            slot_seconds = max(0.12, (cue['end'] - cue['start']) / 1000)
-            original_seconds = clip_durations[index]
+            slot_seconds = max(0.20, (cue['end'] - cue['start']) / 1000.0)
+            audio_seconds = clip_durations[index]
             delay = max(0, cue['start'])
             label = f'a{index}'
 
-            chain = [f'[{index}:a]', 'asetpts=PTS-STARTPTS']
-
-            # Speed up only when the generated speech is longer than its SRT slot.
-            # This avoids cutting off the end of sentences.
-            speed = original_seconds / slot_seconds
-            if speed > 1.03:
-                tempo = atempo_chain(speed)
-                if tempo:
-                    chain.append(tempo)
-
-            chain.extend([
-                f'atrim=0:{slot_seconds:.3f}',
-                f'apad=whole_dur={slot_seconds:.3f}',
-                f'atrim=0:{slot_seconds:.3f}',
-                f'adelay={delay}|{delay}[{label}]',
-            ])
-
-            filters.append(','.join(chain).replace('],', ']'))
+            # Preserve a normal human speaking pace. Short clips are padded to
+            # their subtitle slot; longer clips are not aggressively accelerated.
+            # The short-dialogue AI pass is responsible for fitting most cues.
+            filters.append(
+                f'[{index}:a]asetpts=PTS-STARTPTS,'
+                f'apad=whole_dur={max(slot_seconds, audio_seconds):.3f},'
+                f'adelay={delay}|{delay}[{label}]'
+            )
             labels.append(f'[{label}]')
+            final_end_ms = max(final_end_ms, cue['start'] + int(audio_seconds * 1000), cue['end'])
 
-        total = (max(c['end'] for c in cues) + 500) / 1000
+        total = (final_end_ms + 500) / 1000.0
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0,'
@@ -456,15 +513,9 @@ def create_mp3(srt_text):
             str(output),
         ])
 
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
+        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
             raise RuntimeError(result.stderr[-1500:] or 'FFmpeg failed.')
-
         return output.read_bytes()
 
 
@@ -602,7 +653,7 @@ with tab_video:
                         progress_text.markdown(
                             f"### ✅ 100%  •  {minutes:02d}:{seconds:02d}"
                         )
-                        st.success("✅ Khmer SRT ready • Timestamp ពិតពី Whisper")
+                        st.success("✅ Khmer SRT ready • ស្លាកតួអង្គស្ថិតស្ថេរ • ឃ្លាខ្លីសម្រាប់សំឡេងធម្មតា")
 
                     except Exception as exc:
                         st.error(f"❌ {exc}")
@@ -635,7 +686,7 @@ with tab_video:
                 try:
                     if uploaded_video is not None:
                         analysis_video_path = save_upload(uploaded_video)
-                    with st.spinner("កំពុងកែសន្ទនា និងវិភាគ ប្រុស/ស្រី/ក្មេង/ចាស់/ការគិតក្នុងចិត្ត…"):
+                    with st.spinner("កំពុងរក្សាតួអង្គ កែស្លាកគិតក្នុងចិត្ត និងកាត់ឃ្លាឱ្យខ្លីតាមពេលវេលា…"):
                         analyzed_srt = analyze_inner_thoughts(
                             st.session_state.srt_text,
                             api_key,
@@ -645,7 +696,7 @@ with tab_video:
                     st.session_state.srt_text = analyzed_srt
                     st.session_state.main_srt_editor = analyzed_srt
                     st.session_state.audio_bytes = None
-                    st.success("✅ វិភាគ និងកែសម្រួល SRT រួចរាល់។ Timestamp ត្រូវបានរក្សាដដែល។")
+                    st.success("✅ កែស្លាកតួអង្គ និងកាត់ឃ្លាខ្លីរួចរាល់។ Timestamp នៅដដែល។")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"❌ {exc}")
