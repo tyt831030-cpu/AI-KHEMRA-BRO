@@ -166,28 +166,32 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
   box-sizing:border-box!important;
 }
 .st-key-srt_actions div[data-testid="stHorizontalBlock"]{
-  display:flex!important;
-  flex-flow:row nowrap!important;
-  gap:1px!important;
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;
+  column-gap:1px!important;
+  row-gap:0!important;
   width:100%!important;
   max-width:100%!important;
+  min-width:0!important;
   margin:0!important;
   padding:0!important;
   overflow:hidden!important;
   align-items:stretch!important;
   box-sizing:border-box!important;
 }
-.st-key-srt_actions div[data-testid="column"]{
-  flex:0 0 calc(50% - .5px)!important;
-  width:calc(50% - .5px)!important;
+.st-key-srt_actions div[data-testid="column"],
+.st-key-srt_actions div[data-testid="stColumn"]{
+  flex:none!important;
+  width:100%!important;
   min-width:0!important;
-  max-width:calc(50% - .5px)!important;
+  max-width:100%!important;
   margin:0!important;
   padding:0!important;
   overflow:hidden!important;
   box-sizing:border-box!important;
 }
 .st-key-srt_actions div[data-testid="column"] > div,
+.st-key-srt_actions div[data-testid="stColumn"] > div,
 .st-key-srt_actions .stButton,
 .st-key-srt_actions .stDownloadButton{
   width:100%!important;
@@ -216,13 +220,26 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
   box-sizing:border-box!important;
   background:linear-gradient(90deg,#a51bd4,#ec00ff)!important;
 }
-.st-key-srt_actions div[data-testid="column"]:first-child button{
+.st-key-srt_actions div[data-testid="column"]:first-child button,
+.st-key-srt_actions div[data-testid="stColumn"]:first-child button{
   border-radius:12px 0 0 12px!important;
 }
-.st-key-srt_actions div[data-testid="column"]:last-child button{
+.st-key-srt_actions div[data-testid="column"]:last-child button,
+.st-key-srt_actions div[data-testid="stColumn"]:last-child button{
   border-radius:0 12px 12px 0!important;
 }
 @media(max-width:430px){
+  [data-testid="stMainBlockContainer"], .block-container{
+    width:100%!important;
+    max-width:100%!important;
+    min-width:0!important;
+    overflow-x:hidden!important;
+  }
+  .st-key-srt_actions{
+    width:100%!important;
+    max-width:100%!important;
+    min-width:0!important;
+  }
   .st-key-srt_actions button{
     height:48px!important;
     min-height:48px!important;
@@ -1207,7 +1224,7 @@ with tab_video:
     # Keep both SRT action buttons on one row directly below the editor,
     # including portrait and landscape mobile screens.
     with st.container(key="srt_actions"):
-        c1, c2 = st.columns([1, 1], gap="small")
+        c1, c2 = st.columns([1, 1], gap=None)
         with c1:
             if st.button(
                 "🧠 កែ SRT",
@@ -1242,7 +1259,7 @@ with tab_video:
         with c2:
             if st.session_state.srt_text:
                 st.download_button(
-                    "⬇️ ទាញយក SRT",
+                    "⬇️ ទាញ SRT",
                     st.session_state.srt_text.encode("utf-8"),
                     "khmer_story.srt",
                     "application/x-subrip",
@@ -1250,7 +1267,7 @@ with tab_video:
                 )
             else:
                 st.button(
-                    "⬇️ ទាញយក SRT",
+                    "⬇️ ទាញ SRT",
                     disabled=True,
                     key="download_srt_disabled",
                     use_container_width=True,
