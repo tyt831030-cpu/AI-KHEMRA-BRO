@@ -314,6 +314,8 @@ for key,value in {
     'pending_srt':'',
     'audio_bytes':None,
     'pending_editor_update':None,
+    'source_video_stem':'khmer_story',
+    'mp3_download_name':'khmer_story_dubbed',
 }.items():
     if key not in st.session_state:
         st.session_state[key]=value
@@ -321,6 +323,13 @@ for key,value in {
 def clean_srt(text):
     text=re.sub(r'^```(?:srt)?\s*','',text.strip(),flags=re.I)
     return re.sub(r'\s*```$','',text).strip()
+
+def safe_download_stem(value, fallback='khmer_story_dubbed'):
+    """Create a safe, user-editable filename without changing the audio data."""
+    name = Path(str(value or '')).stem.strip()
+    name = re.sub(r'[\\/:*?"<>|]+', '_', name)
+    name = re.sub(r'\s+', ' ', name).strip(' ._-')
+    return (name or fallback)[:100]
 
 def save_upload(uploaded_file):
     """Save the received MP4 without making another full in-memory copy."""
@@ -1004,6 +1013,11 @@ with tab_video:
     )
 
     if uploaded_video is not None:
+        source_stem = safe_download_stem(Path(uploaded_video.name).stem, 'khmer_story')
+        st.session_state.source_video_stem = source_stem
+        if not st.session_state.get('mp3_download_name') or st.session_state.get('mp3_download_name') == 'khmer_story_dubbed':
+            st.session_state.mp3_download_name = f"{source_stem}_khmer"
+
         # Keep the uploaded filename and file size private on-screen.
         # The file is still available internally for validation and processing.
         size_mb = uploaded_video.size / (1024 * 1024)
@@ -1150,49 +1164,67 @@ with tab_video:
 
     st.markdown('<div class="section-title">2️⃣ AI Dubbing (Edge TTS Studio)</div>', unsafe_allow_html=True)
 
-    generate_clicked = st.button(
-        "🎙️ Generate Dubbed Audio (MP3)",
-        key="generate_audio",
-        use_container_width=False,
-    )
+    # Before completion, show only the Generate button. After completion,
+    # remove the progress/result messages and replace them with filename + Download.
+    if not st.session_state.audio_bytes:
+        generate_clicked = st.button(
+            "🎙️ Generate Dubbed Audio (MP3)",
+            key="generate_audio",
+            use_container_width=False,
+        )
 
-    if generate_clicked:
-        if not st.session_state.srt_text.strip():
-            st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
-        else:
-            progress_bar = st.progress(0)
-            progress_text = st.empty()
-            started_at = time.monotonic()
+        if generate_clicked:
+            if not st.session_state.srt_text.strip():
+                st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
+            else:
+                progress_bar = st.progress(0)
+                progress_text = st.empty()
+                started_at = time.monotonic()
 
-            def update_audio_progress(percent, message):
-                elapsed = max(0, int(time.monotonic() - started_at))
-                minutes, seconds = divmod(elapsed, 60)
-                progress_bar.progress(max(0, min(100, int(percent))))
-                progress_text.markdown(
-                    f"### ⏱️ {int(percent)}% • {minutes:02d}:{seconds:02d}<br>{message}",
-                    unsafe_allow_html=True,
-                )
+                def update_audio_progress(percent, message):
+                    elapsed = max(0, int(time.monotonic() - started_at))
+                    minutes, seconds = divmod(elapsed, 60)
+                    progress_bar.progress(max(0, min(100, int(percent))))
+                    progress_text.markdown(
+                        f"### ⏱️ {int(percent)}% • {minutes:02d}:{seconds:02d}<br>{message}",
+                        unsafe_allow_html=True,
+                    )
 
-            try:
-                update_audio_progress(1, "កំពុងចាប់ផ្ដើមបង្កើតសំឡេង…")
-                st.session_state.audio_bytes = create_mp3(
-                    st.session_state.srt_text,
-                    progress_callback=update_audio_progress,
-                )
-                update_audio_progress(100, "✅ បង្កើត MP3 រួចរាល់")
-                st.success("✅ សំឡេង MP3 បានបង្កើតរួចរាល់")
-            except Exception as exc:
-                progress_bar.empty()
-                progress_text.empty()
-                st.error(f"❌ បង្កើត MP3 មិនបាន៖ {exc}")
-
-    if st.session_state.audio_bytes:
+                try:
+                    update_audio_progress(1, "កំពុងចាប់ផ្ដើមបង្កើតសំឡេង…")
+                    st.session_state.audio_bytes = create_mp3(
+                        st.session_state.srt_text,
+                        progress_callback=update_audio_progress,
+                    )
+                    # Clear the processing display immediately after completion.
+                    progress_bar.empty()
+                    progress_text.empty()
+                    if not st.session_state.get("mp3_download_name"):
+                        stem = st.session_state.get("source_video_stem", "khmer_story")
+                        st.session_state.mp3_download_name = f"{stem}_khmer"
+                    st.rerun()
+                except Exception as exc:
+                    progress_bar.empty()
+                    progress_text.empty()
+                    st.error(f"❌ បង្កើត MP3 មិនបាន៖ {exc}")
+    else:
+        st.text_input(
+            "✏️ ឈ្មោះឯកសារ MP3",
+            key="mp3_download_name",
+            placeholder="ឧទាហរណ៍៖ រឿងភាគទី១_សំឡេងខ្មែរ",
+            help="អ្នកអាចកែឈ្មោះឯកសារមុនចុច Download។",
+        )
         st.audio(st.session_state.audio_bytes, format="audio/mp3")
+        download_stem = safe_download_stem(
+            st.session_state.get("mp3_download_name"),
+            fallback="khmer_story_dubbed",
+        )
         st.download_button(
-            "⬇️ Download Dubbed MP3",
+            "⬇️ ទាញយកសំឡេង MP3",
             st.session_state.audio_bytes,
-            "khmer_story_dubbed.mp3",
+            f"{download_stem}.mp3",
             "audio/mpeg",
+            use_container_width=True,
         )
 
     st.markdown('<div class="clear-wrap">', unsafe_allow_html=True)
@@ -1202,6 +1234,8 @@ with tab_video:
         st.session_state.audio_bytes = None
         st.session_state.audio_job_pending = False
         st.session_state.pending_editor_update = ""
+        st.session_state.source_video_stem = "khmer_story"
+        st.session_state.mp3_download_name = "khmer_story_dubbed"
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
