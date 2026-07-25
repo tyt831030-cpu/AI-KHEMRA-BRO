@@ -69,17 +69,14 @@ button[data-baseweb="tab"][aria-selected="true"]{
   position:fixed!important;top:7px!important;left:7px!important;
   z-index:1000000!important;width:44px!important;
 }
-.st-key-api_menu_container [data-testid="stPopover"]>button{
+.st-key-api_menu_container button{
   width:44px!important;height:40px!important;min-height:40px!important;
   padding:0!important;border-radius:11px!important;background:#050505!important;
   border:1px solid #3f3f46!important;box-shadow:0 3px 12px rgba(0,0,0,.45)!important;
-  color:#fff!important;font-size:0!important;
+  color:#fff!important;font-size:25px!important;font-weight:900!important;
+  line-height:1!important;white-space:nowrap!important;overflow:hidden!important;
 }
-.st-key-api_menu_container [data-testid="stPopover"]>button::after{
-  content:"☰";font-size:25px!important;font-weight:900!important;
-  color:#fff!important;line-height:1!important;
-}
-.st-key-api_menu_container [data-testid="stPopover"]>button:hover{
+.st-key-api_menu_container button:hover{
   background:#111!important;border-color:#fff!important
 }
 div[data-baseweb="popover"]{
@@ -96,7 +93,7 @@ div[data-baseweb="popover"] [data-testid="stVerticalBlock"]{
   .hero p{font-size:clamp(9px,2.7vw,12px)!important;letter-spacing:.8px!important;line-height:1.35!important}
   .section-title{font-size:26px}
   .st-key-api_menu_container{top:5px!important;left:5px!important;width:42px!important}
-  .st-key-api_menu_container [data-testid="stPopover"]>button{
+  .st-key-api_menu_container button{
     width:42px!important;height:38px!important;min-height:38px!important
   }
 }
@@ -516,22 +513,95 @@ def build_srt(cues, translated):
     return "\n\n".join(blocks)
 
 
-def video_to_srt(video_path, api_key, model):
-    """Whisper owns timestamps; Gemini only translates and labels each fixed cue."""
+def is_quota_error(exc):
+    message = str(exc).upper()
+    return (
+        "429" in message
+        or "RESOURCE_EXHAUSTED" in message
+        or "QUOTA" in message
+        or "RATE LIMIT" in message
+    )
+
+
+def is_invalid_key_error(exc):
+    message = str(exc).upper()
+    return (
+        "API_KEY_INVALID" in message
+        or "INVALID API KEY" in message
+        or "API KEY NOT VALID" in message
+        or "PERMISSION_DENIED" in message
+    )
+
+
+def friendly_ai_error(exc, key_count=1):
+    if is_quota_error(exc):
+        if key_count > 1:
+            return (
+                "Gemini API Keys ដែលបានដាក់សុទ្ធតែដល់កម្រិតប្រើប្រាស់។ "
+                "សូមរង់ចាំ quota បើកឡើងវិញ ឬបន្ថែម API Key "
+                "ពី Google Cloud Project ផ្សេងក្នុងម៉ឺនុយ ☰។"
+            )
+        return (
+            "Gemini API Key នេះបានដល់កម្រិតប្រើប្រាស់ (429)។ "
+            "សូមរង់ចាំ quota បើកឡើងវិញ ឬដាក់ API Key "
+            "ពី Google Cloud Project ផ្សេងក្នុងម៉ឺនុយ ☰។"
+        )
+    if is_invalid_key_error(exc):
+        return "Gemini API Key មិនត្រឹមត្រូវ ឬមិនមានសិទ្ធិប្រើ។ សូមដាក់សោថ្មី ហើយចុច «រក្សាទុក»។"
+    message = re.sub(r"https?://\\S+", "", str(exc))
+    return f"AI មិនអាចបញ្ចប់ការបកប្រែបាន៖ {message[:420]}"
+
+
+def video_to_srt(video_path, api_keys, model):
+    """
+    Whisper creates timestamps once.
+    Gemini keys rotate automatically when a key has quota/rate-limit problems.
+    The normal path uses one translation pass plus targeted repair only,
+    reducing Gemini requests compared with the previous three-pass workflow.
+    """
+    if isinstance(api_keys, str):
+        api_keys = [api_keys]
+    api_keys = [str(key).strip() for key in api_keys if str(key).strip()]
+    if not api_keys:
+        raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
+
     with tempfile.TemporaryDirectory() as folder:
         wav_path = Path(folder) / "audio.wav"
         extract_audio(video_path, wav_path)
         cues = transcribe_with_whisper(wav_path)
+        if not cues:
+            raise RuntimeError("Whisper មិនរកឃើញសំឡេងនិយាយក្នុងវីដេអូនេះទេ។")
 
-        client = genai.Client(api_key=api_key)
-        uploaded_video = upload_for_context(client, video_path)
-        translated = translate_cues(client, model, uploaded_video, cues)
-        translated = refine_translated_cues(client, model, uploaded_video, cues, translated)
-        translated = repair_translation_items(client, model, uploaded_video, cues, translated)
-        result = build_srt(cues, translated)
-        if "-->" not in result:
-            raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
-        return result
+        last_error = None
+
+        for api_key in api_keys:
+            try:
+                client = genai.Client(api_key=api_key)
+                uploaded_video = upload_for_context(client, video_path)
+
+                # One main translation pass. translate_cues already repairs
+                # missing/Chinese cues, so the old extra full refinement pass
+                # is skipped to conserve free-tier requests.
+                translated = translate_cues(
+                    client, model, uploaded_video, cues
+                )
+                translated = repair_translation_items(
+                    client, model, uploaded_video, cues, translated
+                )
+
+                result = build_srt(cues, translated)
+                if "-->" not in result:
+                    raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
+                return result
+
+            except Exception as exc:
+                last_error = exc
+                if is_quota_error(exc) or is_invalid_key_error(exc):
+                    # Try the next API key saved by this user.
+                    continue
+                raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
+
+        raise RuntimeError(friendly_ai_error(last_error, len(api_keys)))
 
 
 def srt_to_structured_cues(srt_text):
@@ -789,7 +859,7 @@ for state_key, default_value in {
         st.session_state[state_key] = default_value
 
 with st.container(key="api_menu_container"):
-    with st.popover("Menu", help="API Key និងការកំណត់កម្មវិធី"):
+    with st.popover("☰", help="API Key និងការកំណត់កម្មវិធី"):
         st.markdown("### 🔑 API Key និងការកំណត់")
         st.caption("ទូរសព្ទ/Browser នីមួយៗមាន API Key និងឯកសារផ្ទាល់ខ្លួន។")
 
@@ -798,7 +868,7 @@ with st.container(key="api_menu_container"):
             height=120,
             placeholder="AIza...",
             key="api_keys_manager",
-            help="អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ។",
+            help="អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ។ បើសោមួយ quota ពេញ App នឹងសាកសោបន្ទាប់។",
         )
 
         save_col, logout_col = st.columns(2)
@@ -827,7 +897,7 @@ with st.container(key="api_menu_container"):
             if line.strip()
         ]
         if current_keys:
-            st.success(f"✅ API Key ត្រៀមប្រើ៖ {len(current_keys)}")
+            st.success(f"✅ API Key ត្រៀមប្រើ៖ {len(current_keys)} • Auto rotation")
             if COOKIE_SECRET_CONFIGURED:
                 st.caption("🔒 បានអ៊ិនគ្រីប និងរក្សាទុកសម្រាប់ Browser នេះ។")
             else:
@@ -905,7 +975,7 @@ with tab_video:
                             future = executor.submit(
                                 video_to_srt,
                                 video_path,
-                                api_key,
+                                valid_api_keys,
                                 model,
                             )
 
@@ -948,7 +1018,9 @@ with tab_video:
                         st.success("✅ Khmer SRT ready • ស្លាកតួអង្គស្ថិតស្ថេរ • ឃ្លាខ្លីសម្រាប់សំឡេងធម្មតា")
 
                     except Exception as exc:
-                        st.error(f"❌ {exc}")
+                        progress_bar.empty()
+                        progress_text.empty()
+                        st.error(f"❌ {friendly_ai_error(exc, len(valid_api_keys))}")
                     finally:
                         video_path.unlink(missing_ok=True)
 
