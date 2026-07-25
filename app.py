@@ -834,16 +834,48 @@ with tab_video:
 
     st.markdown('<div class="section-title">2️⃣ AI Dubbing (Edge TTS Studio)</div>', unsafe_allow_html=True)
 
-    if st.button("🎙️ Generate Dubbed Audio (MP3)", key="generate_audio"):
+    # Use a queued action instead of running the long MP3 task inside the
+    # button callback. This prevents mobile Streamlit from temporarily drawing
+    # old/duplicate buttons while the page is busy.
+    if "audio_job_pending" not in st.session_state:
+        st.session_state.audio_job_pending = False
+
+    generate_clicked = st.button(
+        "🎙️ Generate Dubbed Audio (MP3)",
+        key="generate_audio",
+        disabled=st.session_state.audio_job_pending,
+    )
+
+    if generate_clicked:
         if not st.session_state.srt_text.strip():
             st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
         else:
-            try:
-                with st.spinner("កំពុងបង្កើតសំឡេង Piseth, Sreymom និងតួអង្គ…"):
-                    st.session_state.audio_bytes = create_mp3(st.session_state.srt_text)
-                st.success("✅ បង្កើត MP3 រួចរាល់។")
-            except Exception as exc:
-                st.error(f"❌ {exc}")
+            st.session_state.audio_job_pending = True
+            st.rerun()
+
+    if st.session_state.audio_job_pending:
+        audio_status = st.status(
+            "🎙️ កំពុងបង្កើតសំឡេងខ្មែរ… សូមកុំចុចប៊ូតុងផ្សេង",
+            expanded=True,
+        )
+        try:
+            audio_status.write("កំពុងរៀបចំសំឡេងតួអង្គ និងពេលវេលា…")
+            st.session_state.audio_bytes = create_mp3(st.session_state.srt_text)
+            st.session_state.audio_job_pending = False
+            audio_status.update(
+                label="✅ បង្កើត MP3 រួចរាល់",
+                state="complete",
+                expanded=False,
+            )
+            st.rerun()
+        except Exception as exc:
+            st.session_state.audio_job_pending = False
+            audio_status.update(
+                label="❌ បង្កើត MP3 មិនបាន",
+                state="error",
+                expanded=True,
+            )
+            st.error(f"❌ {exc}")
 
     if st.session_state.audio_bytes:
         st.audio(st.session_state.audio_bytes, format="audio/mp3")
@@ -859,6 +891,7 @@ with tab_video:
         st.session_state.srt_text = ""
         st.session_state.pending_srt = ""
         st.session_state.audio_bytes = None
+        st.session_state.audio_job_pending = False
         st.session_state.pending_editor_update = ""
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
