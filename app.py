@@ -9,18 +9,34 @@ import edge_tts
 import streamlit as st
 from google import genai
 
-st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='centered', initial_sidebar_state='collapsed')
+st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='expanded')
 
 st.markdown('''
 <style>
-.stApp{background:#080d15;color:#f8fafc}.block-container{max-width:900px;padding-top:1.2rem;padding-bottom:3rem}
-.hero{border:2px solid #d900ff;border-radius:24px;padding:26px 18px;text-align:center;background:linear-gradient(145deg,#17171d,#0b1018);box-shadow:0 0 24px rgba(217,0,255,.22);margin-bottom:20px}
-.hero h1{font-size:40px;margin:0 0 8px;font-weight:900}.hero p{margin:0;color:#23c8ef;font-weight:800;letter-spacing:1.5px}
-.step{background:#111b2a;border:1px solid #26374f;border-radius:16px;padding:14px 16px;margin:12px 0}.ok{background:#073d31;border:1px solid #10b981;border-radius:14px;padding:13px 15px;margin:10px 0}
-.stButton>button{width:100%;min-height:50px;border:0;border-radius:13px;color:white;font-weight:850;font-size:16px;background:linear-gradient(90deg,#9b1bd1,#ec00ff)}
-.stDownloadButton>button{width:100%;min-height:48px;border-radius:13px;font-weight:800}div[data-testid="stFileUploader"]{background:#eef2f7;border-radius:16px;padding:10px}
-div[data-testid="stTextArea"] textarea{background:#182438!important;color:#fff!important;border:1px solid #5a6b82!important;border-radius:12px!important;font-size:16px!important;line-height:1.65!important;font-family:"Noto Sans Khmer","Khmer OS System",Arial,sans-serif!important}
-@media(max-width:700px){.hero h1{font-size:31px}.hero p{font-size:11px}.block-container{padding-left:1rem;padding-right:1rem}}
+.stApp{background:#080d15;color:#f8fafc}
+.block-container{max-width:1180px;padding-top:1.2rem;padding-bottom:3rem}
+[data-testid="stSidebar"]{background:#101a2c;border-right:1px solid #26364d}
+[data-testid="stSidebar"] .block-container{padding-top:1.1rem}
+.hero{border:2px solid #d900ff;border-radius:24px;padding:34px 18px;text-align:center;background:linear-gradient(145deg,#17171d,#0b1018);box-shadow:0 0 24px rgba(217,0,255,.22);margin-bottom:18px}
+.hero h1{font-size:44px;margin:0 0 8px;font-weight:900}
+.hero p{margin:0;color:#23c8ef;font-weight:800;letter-spacing:1.5px}
+.profile-card{border:2px solid #13c9ef;border-radius:18px;padding:20px 12px;text-align:center;background:#131e31;box-shadow:0 0 16px rgba(19,201,239,.2);margin-bottom:12px}
+.side-ok{background:#073d31;border:1px solid #10b981;border-radius:12px;padding:12px;margin:10px 0}
+.section-title{font-size:30px;font-weight:900;margin:22px 0 10px}
+.step{background:#111b2a;border:1px solid #26374f;border-radius:16px;padding:14px 16px;margin:12px 0}
+.ok{background:#073d31;border:1px solid #10b981;border-radius:14px;padding:13px 15px;margin:10px 0}
+.stButton>button{width:100%;min-height:48px;border:0;border-radius:11px;color:white;font-weight:850;font-size:15px;background:linear-gradient(90deg,#9b1bd1,#ec00ff)}
+.stDownloadButton>button{width:100%;min-height:46px;border-radius:11px;font-weight:800}
+div[data-testid="stFileUploader"]{background:#eef2f7;border-radius:12px;padding:8px}
+div[data-testid="stTextArea"] textarea{background:#182438!important;color:#fff!important;border:1px solid #8290a4!important;border-radius:10px!important;font-size:16px!important;line-height:1.65!important;font-family:"Noto Sans Khmer","Khmer OS System",Arial,sans-serif!important}
+button[data-baseweb="tab"]{background:#151f31;border-radius:8px 8px 0 0;padding:10px 16px}
+button[data-baseweb="tab"][aria-selected="true"]{background:linear-gradient(90deg,#b000df,#f000ff);color:white}
+.clear-wrap .stButton>button{background:linear-gradient(90deg,#08bce3,#12d6ef);color:#00141b;font-weight:900}
+@media(max-width:700px){
+.block-container{padding-left:.75rem;padding-right:.75rem}
+.hero{padding:24px 10px}.hero h1{font-size:31px}.hero p{font-size:11px}
+.section-title{font-size:26px}
+}
 </style>
 ''', unsafe_allow_html=True)
 
@@ -121,53 +137,215 @@ def create_mp3(srt_text):
         if result.returncode!=0: raise RuntimeError(result.stderr[-1200:] or 'FFmpeg failed.')
         return output.read_bytes()
 
-st.markdown('<div class="hero"><h1>AI KHEMRA BRO</h1><p>UPLOAD CHINESE VIDEO → KHMER SRT → KHMER MP3</p></div>',unsafe_allow_html=True)
 
-with st.expander('⚙️ Settings',expanded=False):
-    api_key=st.text_input('Gemini API Key',type='password',placeholder='AIza...')
-    model=st.selectbox('AI Model',['gemini-2.5-flash','gemini-2.5-pro'])
-    lite_mode=st.toggle('📶 4G Lite Mode',value=True)
-    max_mb=60 if lite_mode else 150
-    st.caption(f'វីដេអូណែនាំមិនលើស {max_mb} MB')
+with st.sidebar:
+    st.markdown(
+        '<div class="profile-card">👋 <b>AI KHEMRA BRO</b><br><small>ROLE: ADMIN</small><br><br>🗓️ PLAN: LIFETIME<br>💎 PRO</div>',
+        unsafe_allow_html=True,
+    )
+    st.button("🚪 ចាកចេញ (Logout)", key="logout")
 
-st.markdown('<div class="step"><b>1️⃣ Upload Chinese Video</b></div>',unsafe_allow_html=True)
-uploaded_video=st.file_uploader('📥 ទទួលឯកសារវីដេអូ',type=['mp4','mov','mkv','webm'],help='MP4 ត្រូវបានណែនាំសម្រាប់ 4G និងទូរស័ព្ទ។')
+    st.markdown("---")
+    st.subheader("🌍 Target Language")
+    st.selectbox("ជ្រើសភាសា", ["Khmer (ខ្មែរ)"], key="target_language")
 
-if uploaded_video is not None:
-    size_mb=uploaded_video.size/(1024*1024)
-    st.markdown(f'<div class="ok">✅ ទទួលវីដេអូរួចរាល់<br>📄 {uploaded_video.name}<br>📦 {size_mb:.1f} MB</div>',unsafe_allow_html=True)
-    if size_mb>max_mb: st.error(f'សូមបង្រួមវីដេអូឱ្យតិចជាង {max_mb} MB។')
-    else:
-        if not lite_mode and st.checkbox('▶️ មើលវីដេអូ Preview'): st.video(uploaded_video)
-        if st.button('📝 បង្កើតអក្សរខ្មែរ SRT'):
-            if not api_key.strip(): st.error('សូមបញ្ចូល Gemini API Key ក្នុង Settings ជាមុន។')
+    st.markdown("---")
+    st.subheader("🔑 API Keys Manager")
+    api_keys_text = st.text_area(
+        "Paste Gemini API Keys (One per line)",
+        height=130,
+        placeholder="AIza...\nAIza...",
+        key="api_keys_manager",
+    )
+    valid_api_keys = [x.strip() for x in api_keys_text.splitlines() if x.strip()]
+    if valid_api_keys:
+        st.markdown(
+            f'<div class="side-ok">✅ រកឃើញ {len(valid_api_keys)} Keys</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+    st.subheader("🎭 Translation Style")
+    translation_style = st.radio(
+        "ជ្រើសរបៀបបកប្រែ",
+        ["🔴 Chinese Drama Pro", "⚪ 100% Audio Sync", "⚪ Standard"],
+        key="translation_style",
+    )
+
+    st.markdown("---")
+    model = st.selectbox(
+        "Model",
+        ["gemini-2.5-flash", "gemini-2.5-pro"],
+        key="model_selector",
+    )
+    lite_mode = st.toggle("📶 4G Lite Mode", value=True)
+    max_mb = 60 if lite_mode else 150
+    st.caption(f"ណែនាំវីដេអូមិនលើស {max_mb} MB")
+
+api_key = valid_api_keys[0] if valid_api_keys else ""
+
+st.markdown(
+    '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
+    unsafe_allow_html=True,
+)
+
+tab_video, tab_translate, tab_srt_speech, tab_text_speech = st.tabs(
+    ["🎬 Video → SRT", "📝 AI Subtitle Translator", "📜 SRT → Speech", "🎙️ Text → Speech"]
+)
+
+with tab_video:
+    st.markdown('<div class="section-title">1️⃣ Generate Subtitles (Khmer ខ្មែរ)</div>', unsafe_allow_html=True)
+
+    uploaded_video = st.file_uploader(
+        "Upload Video",
+        type=["mp4", "mov", "mkv", "webm"],
+        help="MP4 ត្រូវបានណែនាំសម្រាប់ 4G និងទូរស័ព្ទ។",
+        key="main_video_upload",
+    )
+
+    if uploaded_video is not None:
+        size_mb = uploaded_video.size / (1024 * 1024)
+        st.markdown(
+            f'<div class="ok">✅ {uploaded_video.name}<br>📦 {size_mb:.1f} MB</div>',
+            unsafe_allow_html=True,
+        )
+
+        if size_mb > max_mb:
+            st.error(f"សូមបង្រួមវីដេអូឱ្យតិចជាង {max_mb} MB។")
+        else:
+            if not lite_mode and st.checkbox("▶️ Video Preview"):
+                st.video(uploaded_video)
+
+            if st.button("📝 Generate Khmer SRT", key="generate_srt"):
+                if not api_key:
+                    st.error("សូមបញ្ចូល Gemini API Key នៅ Sidebar ជាមុន។")
+                else:
+                    video_path = save_upload(uploaded_video)
+                    try:
+                        with st.status("កំពុងបង្កើតអក្សរខ្មែរ…", expanded=True) as status:
+                            st.write("📤 Uploading video...")
+                            st.write("🎧 Listening to Chinese dialogue...")
+                            st.write("🌐 Translating into natural Khmer...")
+                            st.session_state.srt_text = video_to_srt(video_path, api_key, model)
+                            st.session_state.audio_bytes = None
+                            status.update(label="✅ Khmer SRT ready", state="complete")
+                    except Exception as exc:
+                        st.error(f"❌ {exc}")
+                    finally:
+                        video_path.unlink(missing_ok=True)
+
+    st.subheader("Generated SRT")
+    st.caption("You can edit the SRT here before generating audio:")
+    st.session_state.srt_text = st.text_area(
+        "SRT Editor",
+        value=st.session_state.srt_text,
+        height=360,
+        label_visibility="collapsed",
+        key="main_srt_editor",
+    )
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        if st.button("🧠 វិភាគការគិតក្នុងចិត្ត (Analyze Inner Thoughts)", key="analyze_thoughts"):
+            if not st.session_state.srt_text.strip():
+                st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
             else:
-                video_path=save_upload(uploaded_video)
-                try:
-                    with st.status('កំពុងបង្កើតអក្សរខ្មែរ…',expanded=True) as status:
-                        st.write('📤 កំពុងផ្ញើវីដេអូទៅ AI…'); st.write('🎧 កំពុងស្ដាប់សំឡេងចិន…'); st.write('🌐 កំពុងបកប្រែទៅភាសាខ្មែរ…')
-                        st.session_state.srt_text=video_to_srt(video_path,api_key.strip(),model); st.session_state.audio_bytes=None
-                        status.update(label='✅ បង្កើត Khmer SRT រួចរាល់',state='complete')
-                except Exception as exc: st.error(f'❌ {exc}')
-                finally: video_path.unlink(missing_ok=True)
+                st.info("✅ SRT ត្រៀមរួចសម្រាប់ស្លាក [M_THINK] និង [F_THINK]។")
+    with c2:
+        if st.session_state.srt_text:
+            st.download_button(
+                "⬇️ Download SRT",
+                st.session_state.srt_text.encode("utf-8"),
+                "khmer_story.srt",
+                "application/x-subrip",
+            )
 
-if st.session_state.srt_text:
-    st.markdown('<div class="step"><b>2️⃣ Generated Khmer SRT</b></div>',unsafe_allow_html=True)
-    st.session_state.srt_text=st.text_area('អក្សរខ្មែរបង្ហាញនៅទីនេះ ហើយអាចកែបាន',value=st.session_state.srt_text,height=430)
-    st.download_button('⬇️ Download Khmer SRT',st.session_state.srt_text.encode('utf-8'),'khmer_story.srt','application/x-subrip')
-    st.markdown('<div class="step"><b>3️⃣ Generate Khmer Voice MP3</b></div>',unsafe_allow_html=True)
-    if st.button('🎙️ បង្កើតសំឡេងខ្មែរ MP3'):
-        try:
-            with st.spinner('កំពុងបង្កើតសំឡេង Piseth និង Sreymom…'): st.session_state.audio_bytes=create_mp3(st.session_state.srt_text)
-            st.success('✅ បង្កើត MP3 រួចរាល់។')
-        except Exception as exc: st.error(f'❌ {exc}')
+    st.markdown('<div class="section-title">2️⃣ AI Dubbing (Edge TTS Studio)</div>', unsafe_allow_html=True)
 
-if st.session_state.audio_bytes:
-    st.audio(st.session_state.audio_bytes,format='audio/mp3')
-    st.download_button('⬇️ Download Khmer MP3',st.session_state.audio_bytes,'khmer_story_dubbed.mp3','audio/mpeg')
+    if st.button("🎙️ Generate Dubbed Audio (MP3)", key="generate_audio"):
+        if not st.session_state.srt_text.strip():
+            st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
+        else:
+            try:
+                with st.spinner("កំពុងបង្កើតសំឡេង Piseth, Sreymom និងតួអង្គ…"):
+                    st.session_state.audio_bytes = create_mp3(st.session_state.srt_text)
+                st.success("✅ បង្កើត MP3 រួចរាល់។")
+            except Exception as exc:
+                st.error(f"❌ {exc}")
 
-if uploaded_video is not None or st.session_state.srt_text:
-    if st.button('🗑️ Clear Project'):
-        st.session_state.srt_text=''; st.session_state.audio_bytes=None; st.rerun()
+    if st.session_state.audio_bytes:
+        st.audio(st.session_state.audio_bytes, format="audio/mp3")
+        st.download_button(
+            "⬇️ Download Dubbed MP3",
+            st.session_state.audio_bytes,
+            "khmer_story_dubbed.mp3",
+            "audio/mpeg",
+        )
 
-st.caption('AI-KHEMRA-BRO • Chinese Story Translation • Mobile-first')
+    st.markdown('<div class="clear-wrap">', unsafe_allow_html=True)
+    if st.button("🗑️ សម្អាត (Clear Video Project)", key="clear_project"):
+        st.session_state.srt_text = ""
+        st.session_state.audio_bytes = None
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with tab_translate:
+    st.header("AI Subtitle Translator")
+    st.info("បិទភ្ជាប់ Chinese SRT ហើយបកប្រែទៅ Khmer SRT។")
+    source_srt = st.text_area("Chinese SRT", height=300, key="translator_source")
+    if st.button("🌐 Translate to Khmer", key="translate_btn"):
+        if not source_srt.strip():
+            st.warning("សូមបញ្ចូល Chinese SRT។")
+        elif not api_key:
+            st.error("សូមបញ្ចូល Gemini API Key នៅ Sidebar។")
+        else:
+            client = genai.Client(api_key=api_key)
+            prompt = PROMPT + "\nKeep all original numbering and timestamps unchanged.\nSOURCE:\n" + source_srt
+            try:
+                with st.spinner("កំពុងបកប្រែ…"):
+                    response = client.models.generate_content(model=model, contents=prompt)
+                    st.session_state.srt_text = clean_srt(response.text or "")
+                st.success("✅ បកប្រែរួចរាល់។")
+            except Exception as exc:
+                st.error(f"❌ {exc}")
+
+with tab_srt_speech:
+    st.header("SRT → Speech")
+    speech_srt = st.text_area(
+        "Khmer SRT with [M] [F] [BOY] [GIRL] [OLD_M] [OLD_F] [M_THINK] [F_THINK]",
+        height=360,
+        key="speech_srt_input",
+    )
+    if st.button("🎧 Create MP3", key="srt_to_speech_btn"):
+        if not speech_srt.strip():
+            st.warning("សូមបញ្ចូល Khmer SRT។")
+        else:
+            try:
+                with st.spinner("កំពុងបង្កើតសំឡេង…"):
+                    st.session_state.audio_bytes = create_mp3(speech_srt)
+                st.success("✅ បង្កើត MP3 រួចរាល់។")
+            except Exception as exc:
+                st.error(f"❌ {exc}")
+
+with tab_text_speech:
+    st.header("Text → Speech")
+    plain_text = st.text_area("Khmer Text", height=260, key="plain_text_input")
+    voice_choice = st.selectbox(
+        "Voice",
+        ["M", "F", "BOY", "GIRL", "OLD_M", "OLD_F", "M_THINK", "F_THINK"],
+        key="plain_voice",
+    )
+    if st.button("🔊 Generate Voice", key="plain_voice_btn"):
+        if not plain_text.strip():
+            st.warning("សូមបញ្ចូលអត្ថបទខ្មែរ។")
+        else:
+            try:
+                with tempfile.TemporaryDirectory() as folder:
+                    output = Path(folder) / "speech.mp3"
+                    run_async(synthesize(plain_text.strip(), VOICE_PROFILES[voice_choice], output))
+                    st.session_state.audio_bytes = output.read_bytes()
+                st.success("✅ បង្កើតសំឡេងរួចរាល់។")
+            except Exception as exc:
+                st.error(f"❌ {exc}")
+
+st.caption("AI-KHEMRA-BRO • Chinese Story Translation • Mobile-first")
