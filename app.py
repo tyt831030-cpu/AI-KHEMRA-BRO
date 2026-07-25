@@ -142,6 +142,33 @@ div[data-baseweb="popover"] [data-testid="stVerticalBlock"]{
     width:42px!important;height:38px!important;min-height:38px!important
   }
 }
+
+/* Keep the two SRT action buttons side-by-side on every phone orientation. */
+.st-key-srt_actions div[data-testid="stHorizontalBlock"]{
+  display:flex!important;
+  flex-direction:row!important;
+  flex-wrap:nowrap!important;
+  gap:8px!important;
+  width:100%!important;
+  align-items:stretch!important;
+}
+.st-key-srt_actions div[data-testid="column"]{
+  flex:1 1 0!important;
+  width:50%!important;
+  min-width:0!important;
+}
+.st-key-srt_actions button{
+  width:100%!important;
+  min-height:58px!important;
+  padding:.55rem .35rem!important;
+  white-space:normal!important;
+  line-height:1.2!important;
+  font-size:clamp(12px,3.4vw,18px)!important;
+}
+@media (orientation:landscape) and (max-height:600px){
+  .st-key-srt_actions button{min-height:52px!important;font-size:15px!important}
+}
+
 </style>
 ''', unsafe_allow_html=True)
 
@@ -1112,55 +1139,57 @@ with tab_video:
     )
     st.session_state.srt_text = st.session_state.main_srt_editor
 
-    # Keep both SRT action buttons on one row directly below the editor.
-    c1, c2 = st.columns(2, gap="small")
-    with c1:
-        if st.button(
-            "🧠 កែស្លាក និងអក្សរ SRT",
-            key="analyze_thoughts",
-            use_container_width=True,
-        ):
-            if not st.session_state.srt_text.strip():
-                st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
-            elif not api_key:
-                st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
+    # Keep both SRT action buttons on one row directly below the editor,
+    # including portrait and landscape mobile screens.
+    with st.container(key="srt_actions"):
+        c1, c2 = st.columns([1, 1], gap="small")
+        with c1:
+            if st.button(
+                "🧠 កែស្លាក និងអក្សរ SRT",
+                key="analyze_thoughts",
+                use_container_width=True,
+            ):
+                if not st.session_state.srt_text.strip():
+                    st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
+                elif not api_key:
+                    st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
+                else:
+                    analysis_video_path = None
+                    try:
+                        if uploaded_video is not None:
+                            analysis_video_path = save_upload(uploaded_video)
+                        with st.spinner("កំពុងរក្សាតួអង្គ កែស្លាកគិតក្នុងចិត្ត និងកាត់ឃ្លាឱ្យខ្លីតាមពេលវេលា…"):
+                            analyzed_srt = analyze_inner_thoughts(
+                                st.session_state.srt_text,
+                                api_key,
+                                model,
+                                analysis_video_path,
+                            )
+                        st.session_state.srt_text = analyzed_srt
+                        st.session_state.pending_editor_update = analyzed_srt
+                        st.session_state.audio_bytes = None
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"❌ {exc}")
+                    finally:
+                        if analysis_video_path is not None:
+                            analysis_video_path.unlink(missing_ok=True)
+        with c2:
+            if st.session_state.srt_text:
+                st.download_button(
+                    "⬇️ ដោនឡូត SRT",
+                    st.session_state.srt_text.encode("utf-8"),
+                    "khmer_story.srt",
+                    "application/x-subrip",
+                    use_container_width=True,
+                )
             else:
-                analysis_video_path = None
-                try:
-                    if uploaded_video is not None:
-                        analysis_video_path = save_upload(uploaded_video)
-                    with st.spinner("កំពុងរក្សាតួអង្គ កែស្លាកគិតក្នុងចិត្ត និងកាត់ឃ្លាឱ្យខ្លីតាមពេលវេលា…"):
-                        analyzed_srt = analyze_inner_thoughts(
-                            st.session_state.srt_text,
-                            api_key,
-                            model,
-                            analysis_video_path,
-                        )
-                    st.session_state.srt_text = analyzed_srt
-                    st.session_state.pending_editor_update = analyzed_srt
-                    st.session_state.audio_bytes = None
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"❌ {exc}")
-                finally:
-                    if analysis_video_path is not None:
-                        analysis_video_path.unlink(missing_ok=True)
-    with c2:
-        if st.session_state.srt_text:
-            st.download_button(
-                "⬇️ ដោនឡូត SRT",
-                st.session_state.srt_text.encode("utf-8"),
-                "khmer_story.srt",
-                "application/x-subrip",
-                use_container_width=True,
-            )
-        else:
-            st.button(
-                "⬇️ ដោនឡូត SRT",
-                disabled=True,
-                key="download_srt_disabled",
-                use_container_width=True,
-            )
+                st.button(
+                    "⬇️ ដោនឡូត SRT",
+                    disabled=True,
+                    key="download_srt_disabled",
+                    use_container_width=True,
+                )
 
     st.markdown('<div class="section-title">2️⃣ AI Dubbing (Edge TTS Studio)</div>', unsafe_allow_html=True)
 
