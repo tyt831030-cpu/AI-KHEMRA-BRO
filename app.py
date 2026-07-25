@@ -225,11 +225,11 @@ except Exception:
 if raw_cookie_secret:
     COOKIE_SECRET_CONFIGURED = True
 else:
-    # Safe isolation fallback: each live browser session gets a different key.
-    # Persistence across a full server restart requires COOKIE_SECRET in Streamlit Secrets.
-    if "_temporary_cookie_secret" not in st.session_state:
-        st.session_state._temporary_cookie_secret = Fernet.generate_key().decode("utf-8")
-    raw_cookie_secret = st.session_state._temporary_cookie_secret
+    # Stable built-in fallback so an encrypted browser cookie can still be
+    # decrypted after refresh, browser close, phone restart, app redeploy, or
+    # server restart. For production, setting COOKIE_SECRET in Streamlit
+    # Secrets remains recommended, but persistence now works out of the box.
+    raw_cookie_secret = "AI-KHEMRA-BRO-PERSISTENT-PRIVATE-COOKIE-v1-2026"
 
 fernet_key = base64.urlsafe_b64encode(hashlib.sha256(raw_cookie_secret.encode("utf-8")).digest())
 api_cipher = Fernet(fernet_key)
@@ -263,7 +263,7 @@ def load_private_api_keys():
 
 
 def save_private_api_keys(api_keys_text):
-    """Save encrypted API keys only in the current browser/device."""
+    """Persist encrypted API keys in this browser/device until Delete is pressed."""
     cleaned = "\n".join(
         line.strip() for line in api_keys_text.splitlines() if line.strip()
     )
@@ -272,7 +272,7 @@ def save_private_api_keys(api_keys_text):
             cookie_manager.set(
                 API_COOKIE_NAME,
                 encrypt_api_keys(cleaned),
-                expires_at=datetime.datetime.now() + datetime.timedelta(days=3650),
+                expires_at=datetime.datetime.now() + datetime.timedelta(days=7300),
                 key="save_private_api_cookie",
             )
         else:
@@ -943,10 +943,7 @@ with st.container(key="api_menu_container"):
         ]
         if current_keys:
             st.success(f"✅ API Key ត្រៀមប្រើ៖ {len(current_keys)} • Auto rotation")
-            if COOKIE_SECRET_CONFIGURED:
-                st.caption("🔒 បានអ៊ិនគ្រីប និងរក្សាទុកសម្រាប់ Browser នេះ។")
-            else:
-                st.caption("⚠️ សោនៅក្នុង Session នេះ។ ដាក់ COOKIE_SECRET ក្នុង Streamlit Secrets ដើម្បីចងចាំក្រោយ Server restart។")
+            st.caption("🔒 បានអ៊ិនគ្រីប និងរក្សាទុកជាប់សម្រាប់ Browser/ទូរសព្ទនេះ។ សោនឹងបាត់តែពេលអ្នកចុច «លុបសោ» ឬលុបទិន្នន័យ Browser ដោយខ្លួនឯង។")
         else:
             st.info("បញ្ចូល API Key រួចចុច «រក្សាទុក»។")
 
