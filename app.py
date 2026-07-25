@@ -50,6 +50,7 @@ st.markdown('''
   font-weight:850;font-size:15px;background:linear-gradient(90deg,#9b1bd1,#ec00ff)
 }
 .stDownloadButton>button{width:100%;min-height:46px;border-radius:11px;font-weight:800}
+.st-key-generate_srt, .st-key-generate_srt > div, .st-key-generate_srt button{width:100%!important;max-width:100%!important;display:block!important;box-sizing:border-box!important}
 div[data-testid="stFileUploader"]{background:#eef2f7;border-radius:12px;padding:8px}
 div[data-testid="stTextArea"] textarea{
   background:#182438!important;color:#fff!important;border:1px solid #8290a4!important;
@@ -1137,7 +1138,7 @@ with tab_video:
             if not lite_mode and st.checkbox("▶️ Video Preview"):
                 st.video(uploaded_video)
 
-            if st.button("📝 Generate Khmer SRT", key="generate_srt"):
+            if st.button("📝 Generate Khmer SRT", key="generate_srt", use_container_width=True):
                 if not api_key:
                     st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
                 else:
