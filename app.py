@@ -56,9 +56,33 @@ div[data-testid="stTextArea"] textarea{
   border-radius:10px!important;font-size:16px!important;line-height:1.65!important;
   font-family:"Noto Sans Khmer","Khmer OS System",Arial,sans-serif!important
 }
-button[data-baseweb="tab"]{background:#151f31;border-radius:8px 8px 0 0;padding:10px 16px}
+/* Beautiful mobile tab menu: all 4 tabs stay fully visible. */
+div[data-baseweb="tab-list"]{
+  gap:8px!important;
+  background:#0f1726!important;
+  border:1px solid #263349!important;
+  border-radius:14px!important;
+  padding:7px!important;
+  overflow:visible!important;
+}
+button[data-baseweb="tab"]{
+  background:#151f31!important;
+  border:1px solid #2b3950!important;
+  border-radius:10px!important;
+  padding:11px 13px!important;
+  min-height:46px!important;
+  color:#aeb8c7!important;
+  font-weight:800!important;
+  justify-content:center!important;
+  white-space:normal!important;
+  text-align:center!important;
+  line-height:1.2!important;
+}
 button[data-baseweb="tab"][aria-selected="true"]{
-  background:linear-gradient(90deg,#b000df,#f000ff);color:white
+  background:linear-gradient(90deg,#a51bd4,#e800ff)!important;
+  border-color:#f05cff!important;
+  color:white!important;
+  box-shadow:0 5px 16px rgba(217,0,255,.24)!important;
 }
 .clear-wrap .stButton>button{
   background:linear-gradient(90deg,#08bce3,#12d6ef);color:#00141b;font-weight:900
@@ -92,6 +116,27 @@ div[data-baseweb="popover"] [data-testid="stVerticalBlock"]{
   .hero h1{font-size:clamp(28px,9vw,42px)!important;letter-spacing:-1px!important}
   .hero p{font-size:clamp(9px,2.7vw,12px)!important;letter-spacing:.8px!important;line-height:1.35!important}
   .section-title{font-size:26px}
+  div[data-baseweb="tab-list"]{
+    display:grid!important;
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+    width:100%!important;
+    gap:7px!important;
+    padding:7px!important;
+  }
+  button[data-baseweb="tab"]{
+    width:100%!important;
+    min-width:0!important;
+    padding:10px 5px!important;
+    min-height:50px!important;
+    font-size:12px!important;
+  }
+  button[data-baseweb="tab"] p{
+    white-space:normal!important;
+    overflow:visible!important;
+    text-overflow:clip!important;
+    text-align:center!important;
+    line-height:1.25!important;
+  }
   .st-key-api_menu_container{top:5px!important;left:5px!important;width:42px!important}
   .st-key-api_menu_container button{
     width:42px!important;height:38px!important;min-height:38px!important
