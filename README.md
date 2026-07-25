@@ -1,34 +1,36 @@
-# AI KHEMRA BRO — Whisper Timestamp Fix
+# AI KHEMRA BRO — Clean Multi-User Release
 
-This version keeps the existing UI and changes the processing pipeline:
+## Main workflow
+1. Upload Chinese video.
+2. Faster-Whisper extracts speech and authoritative timestamps.
+3. Gemini translates only the dialogue and assigns speaker roles.
+4. Khmer SRT fills the editor automatically.
+5. Edit/analyze SRT.
+6. Edge TTS creates a synchronized Khmer MP3.
+7. Download SRT and MP3.
 
-1. FFmpeg extracts 16 kHz mono audio.
-2. Faster-Whisper creates authoritative Chinese timestamps.
-3. Gemini translates and assigns voice roles without changing timestamps.
-4. Khmer SRT automatically fills the existing editor.
-5. Analyze Inner Thoughts now really edits dialogue/tags while preserving timestamps.
-6. Edge TTS creates the synchronized MP3.
+## API menu
+- Tap the black **☰** button at the top-left.
+- Paste the user's own Gemini API key.
+- Tap **រក្សាទុក**.
+- Each phone/browser has its own session, API key, upload, SRT and MP3.
 
-Upload all files to the root of the existing GitHub repository and commit. Streamlit Cloud installs FFmpeg from `packages.txt`. The first run downloads the Whisper base model and can take longer.
+## Deploy on Streamlit Community Cloud
+Upload these files to the repository root:
+- `app.py`
+- `requirements.txt`
+- `packages.txt`
+- `.streamlit/secrets.toml.example`
 
+In Streamlit Cloud → App settings → Secrets, add:
 
-## Short Dialogue & Voice Fix
-- Stable speaker/role second pass
-- THINK only for unheard inner monologue
-- Short Khmer dialogue based on cue duration
-- Natural-speed MP3 without aggressive time compression
+```toml
+COOKIE_SECRET = "a-long-random-private-secret"
+```
 
+Do not commit the real secret or any Gemini API key to GitHub.
 
-## Audio Loudness Fix
-- Prevents amix from reducing volume across many subtitle clips.
-- Normalizes output to social-media-friendly loudness.
-- Prevents generated character voices from overlapping.
-- Uses subtle age/child pitch settings to reduce robotic sound.
-
-
-## Multi-user privacy
-- Every phone/browser has its own Streamlit session, SRT, MP3, upload and API key.
-- API keys are never stored in one shared server file.
-- API keys are encrypted before being stored in that browser's cookie.
-- Add COOKIE_SECRET in Streamlit Community Cloud Secrets for persistence after server restarts.
-- Press Logout to remove only that phone/browser's saved API key and active project.
+## Notes
+- The first run may take longer while Faster-Whisper downloads its model.
+- Large videos and many simultaneous users require stronger paid hosting.
+- Automatic speaker age/gender/thought detection is AI-assisted and may still need human review.
