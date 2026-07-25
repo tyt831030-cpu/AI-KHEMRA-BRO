@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import edge_tts
 import streamlit as st
 from google import genai
+from faster_whisper import WhisperModel
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='expanded')
 
@@ -56,40 +57,49 @@ VOICE_PROFILES={
 'NARRATOR_M':{'voice':PISITH,'rate':'-3%','pitch':'-3Hz','volume':'+0%'},
 'NARRATOR_F':{'voice':SREYMOM,'rate':'-3%','pitch':'-2Hz','volume':'+0%'}}
 
-PROMPT='''You are an expert Chinese-drama subtitle translator and dubbing director.
+TRANSLATE_PROMPT = """You are an expert Chinese-drama translator and dubbing director.
+The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
+Use the uploaded video only to understand dialogue, visible speaker, age, gender, narration, and inner thoughts.
 
-Analyze BOTH the audio and visible character context in the uploaded video.
-Return valid Khmer SRT only.
+Return a JSON array only. Each object must contain exactly:
+{"id": integer, "tag": string, "text": string}
 
-TIMING RULES:
-1. Each timestamp must begin when the spoken line begins and end when it ends.
-2. Do not overlap neighboring cues unless two characters truly speak at the same time.
-3. Do not skip whispers, short replies, cries, or inner thoughts.
-4. Keep cue order strictly chronological.
-5. Use SRT time format exactly: 00:00:00,000 --> 00:00:03,000.
+Allowed tags:
+M, F, BOY, GIRL, OLD_M, OLD_F, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
 
-KHMER RULES:
-6. Translate into natural spoken Khmer for Chinese drama dubbing.
-7. Preserve names, rank, age, relationship, emotion, and pronouns consistently.
-8. No Chinese characters in the Khmer dialogue.
+Rules:
+- Return exactly one object for every supplied cue ID, in the same order.
+- Translate into natural spoken Khmer suitable for Chinese drama dubbing.
+- Preserve meaning, emotion, names, ranks, relationships and pronouns.
+- Use M_THINK/F_THINK only for unheard inner monologue.
+- Use BOY/GIRL only for children; OLD_M/OLD_F only for elderly speakers.
+- Use NARRATOR_M/NARRATOR_F only for narration.
+- No Chinese characters in the Khmer text.
+- Never invent, merge, split, omit, or renumber cues.
+- JSON only. No markdown fences or explanation.
+"""
 
-SPEAKER RULES:
-9. Add exactly one tag at the beginning of every subtitle dialogue.
-10. Keep the same character tag consistent across nearby cues.
-11. Inner monologue or unheard thought must use M_THINK or F_THINK.
-12. A visible speaking child must use BOY or GIRL.
-13. An elderly speaker must use OLD_M or OLD_F.
-14. Normal adult dialogue must use M or F.
-15. Narration must use NARRATOR_M or NARRATOR_F.
+ANALYZE_PROMPT = """You are a Chinese-drama Khmer dubbing editor.
+Improve the supplied Khmer SRT dialogue and classify speakers, while preserving every cue number and timestamp exactly.
+Return a JSON array only with exactly:
+{"id": integer, "tag": string, "text": string}
 
-Allowed tags only:
-[M] [F] [BOY] [GIRL] [OLD_M] [OLD_F]
-[M_THINK] [F_THINK] [NARRATOR_M] [NARRATOR_F]
+Allowed tags:
+M, F, BOY, GIRL, OLD_M, OLD_F, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
 
-OUTPUT RULES:
-16. Output SRT only.
-17. No markdown fences and no explanation.
-'''
+Rules:
+- Return exactly one object per cue ID in the same order.
+- Do not alter timestamps, cue count, or cue order.
+- Correct incomplete or awkward Khmer into natural spoken Khmer.
+- Keep character identity consistent across nearby cues.
+- Detect inner thought, narrator, adult, child, and elderly roles from context.
+- Do not add explanations or markdown.
+"""
+
+@st.cache_resource(show_spinner=False)
+def load_whisper_model():
+    # Base + int8 is selected so it can run on Streamlit Community Cloud CPU.
+    return WhisperModel("base", device="cpu", compute_type="int8")
 
 for key,value in {
     'srt_text':'',
@@ -112,18 +122,212 @@ def save_upload(uploaded_file):
         temp.flush()
         return Path(temp.name)
 
-def video_to_srt(video_path,api_key,model):
-    client=genai.Client(api_key=api_key)
-    uploaded=client.files.upload(file=str(video_path))
-    for _ in range(90):
-        state=getattr(getattr(uploaded,'state',None),'name','')
-        if state!='PROCESSING': break
-        time.sleep(2); uploaded=client.files.get(name=uploaded.name)
-    if getattr(getattr(uploaded,'state',None),'name','')=='FAILED': raise RuntimeError('AI មិនអាចដំណើរការវីដេអូនេះបានទេ។')
-    response=client.models.generate_content(model=model,contents=[uploaded,PROMPT])
-    result=clean_srt(response.text or '')
-    if '-->' not in result: raise RuntimeError('AI មិនបានបង្កើត SRT ត្រឹមត្រូវទេ។')
-    return result
+def seconds_to_srt(value):
+    total_ms = max(0, int(round(float(value) * 1000)))
+    hours, rem = divmod(total_ms, 3_600_000)
+    minutes, rem = divmod(rem, 60_000)
+    seconds, millis = divmod(rem, 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def extract_audio(video_path, wav_path):
+    result = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(video_path),
+            "-vn", "-ac", "1", "-ar", "16000",
+            "-c:a", "pcm_s16le", str(wav_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0 or not wav_path.exists():
+        raise RuntimeError(result.stderr[-1200:] or "មិនអាចទាញសំឡេងចេញពីវីដេអូបានទេ។")
+
+
+def transcribe_with_whisper(wav_path):
+    model = load_whisper_model()
+    segments, _ = model.transcribe(
+        str(wav_path),
+        language="zh",
+        beam_size=5,
+        vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 250},
+        condition_on_previous_text=True,
+        word_timestamps=False,
+    )
+    cues = []
+    last_end = 0.0
+    for segment in segments:
+        source = (segment.text or "").strip()
+        if not source:
+            continue
+        start = max(0.0, float(segment.start))
+        end = max(start + 0.18, float(segment.end))
+        # Remove tiny ASR overlaps while keeping the real Whisper timing.
+        if start < last_end and (last_end - start) < 0.35:
+            start = last_end
+        if end <= start:
+            end = start + 0.35
+        cues.append({
+            "id": len(cues) + 1,
+            "start": start,
+            "end": end,
+            "source": source,
+        })
+        last_end = end
+    if not cues:
+        raise RuntimeError("Whisper មិនបានរកឃើញសន្ទនាក្នុងវីដេអូនេះទេ។")
+    return cues
+
+
+def upload_for_context(client, video_path):
+    uploaded = client.files.upload(file=str(video_path))
+    for _ in range(120):
+        state = getattr(getattr(uploaded, "state", None), "name", "")
+        if state != "PROCESSING":
+            break
+        time.sleep(2)
+        uploaded = client.files.get(name=uploaded.name)
+    if getattr(getattr(uploaded, "state", None), "name", "") == "FAILED":
+        raise RuntimeError("AI មិនអាចអានវីដេអូនេះបានទេ។")
+    return uploaded
+
+
+def parse_json_array(raw_text):
+    import json
+    cleaned = (raw_text or "").strip()
+    cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\\s*```$", "", cleaned)
+    left, right = cleaned.find("["), cleaned.rfind("]")
+    if left == -1 or right == -1 or right <= left:
+        raise ValueError("AI មិនបានត្រឡប់ JSON ត្រឹមត្រូវ។")
+    value = json.loads(cleaned[left:right + 1])
+    if not isinstance(value, list):
+        raise ValueError("AI JSON មិនមែនជាបញ្ជី។")
+    return value
+
+
+def translate_cues(client, model_name, uploaded_video, cues):
+    result_by_id = {}
+    batch_size = 30
+    for offset in range(0, len(cues), batch_size):
+        batch = cues[offset:offset + batch_size]
+        cue_lines = "\n".join(
+            f"ID={cue['id']} | {seconds_to_srt(cue['start'])} --> "
+            f"{seconds_to_srt(cue['end'])} | SOURCE={cue['source']}"
+            for cue in batch
+        )
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[uploaded_video, TRANSLATE_PROMPT + "\n\nCUES:\n" + cue_lines],
+        )
+        items = parse_json_array(response.text or "")
+        for item in items:
+            try:
+                cue_id = int(item.get("id"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            tag = str(item.get("tag", "M")).upper().strip()
+            if tag not in VOICE_PROFILES:
+                tag = "M"
+            translated = str(item.get("text", "")).strip()
+            if translated:
+                result_by_id[cue_id] = {"tag": tag, "text": translated}
+
+    missing = [cue["id"] for cue in cues if cue["id"] not in result_by_id]
+    if missing:
+        raise RuntimeError(
+            "AI បកប្រែមិនអស់គ្រប់បន្ទាត់។ សូមចុច Generate ម្តងទៀត។ "
+            f"បាត់បន្ទាត់៖ {missing[:12]}"
+        )
+    return result_by_id
+
+
+def build_srt(cues, translated):
+    blocks = []
+    for cue in cues:
+        item = translated[cue["id"]]
+        blocks.append(
+            f'{cue["id"]}\n'
+            f'{seconds_to_srt(cue["start"])} --> {seconds_to_srt(cue["end"])}\n'
+            f'[{item["tag"]}] {item["text"]}'
+        )
+    return "\n\n".join(blocks)
+
+
+def video_to_srt(video_path, api_key, model):
+    """Whisper owns timestamps; Gemini only translates and labels each fixed cue."""
+    with tempfile.TemporaryDirectory() as folder:
+        wav_path = Path(folder) / "audio.wav"
+        extract_audio(video_path, wav_path)
+        cues = transcribe_with_whisper(wav_path)
+
+        client = genai.Client(api_key=api_key)
+        uploaded_video = upload_for_context(client, video_path)
+        translated = translate_cues(client, model, uploaded_video, cues)
+        result = build_srt(cues, translated)
+        if "-->" not in result:
+            raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
+        return result
+
+
+def srt_to_structured_cues(srt_text):
+    parsed = parse_srt(srt_text)
+    return [
+        {
+            "id": index,
+            "start_ms": cue["start"],
+            "end_ms": cue["end"],
+            "tag": cue["tag"],
+            "text": cue["text"],
+        }
+        for index, cue in enumerate(parsed, start=1)
+    ]
+
+
+def ms_to_srt(value):
+    return seconds_to_srt(value / 1000.0)
+
+
+def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
+    cues = srt_to_structured_cues(srt_text)
+    if not cues:
+        raise ValueError("រកមិនឃើញ SRT ត្រឹមត្រូវទេ។")
+    client = genai.Client(api_key=api_key)
+    context = upload_for_context(client, video_path) if video_path else None
+    updated = {}
+    batch_size = 35
+    for offset in range(0, len(cues), batch_size):
+        batch = cues[offset:offset + batch_size]
+        payload = "\n".join(
+            f'ID={cue["id"]} | TAG={cue["tag"]} | TEXT={cue["text"]}'
+            for cue in batch
+        )
+        contents = [ANALYZE_PROMPT + "\n\nCUES:\n" + payload]
+        if context is not None:
+            contents.insert(0, context)
+        response = client.models.generate_content(model=model_name, contents=contents)
+        for item in parse_json_array(response.text or ""):
+            try:
+                cue_id = int(item.get("id"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            tag = str(item.get("tag", "M")).upper().strip()
+            if tag not in VOICE_PROFILES:
+                tag = "M"
+            dialogue = str(item.get("text", "")).strip()
+            if dialogue:
+                updated[cue_id] = {"tag": tag, "text": dialogue}
+
+    blocks = []
+    for cue in cues:
+        item = updated.get(cue["id"], {"tag": cue["tag"], "text": cue["text"]})
+        blocks.append(
+            f'{cue["id"]}\n{ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])}\n'
+            f'[{item["tag"]}] {item["text"]}'
+        )
+    return "\n\n".join(blocks)
 
 def parse_srt(srt_text):
     time_re=re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
@@ -140,7 +344,10 @@ def parse_srt(srt_text):
         dialogue=' '.join(lines[idx+1:]).strip(); tag_match=tag_re.match(dialogue)
         tag=tag_match.group(1).upper() if tag_match else 'M'
         if tag_match: dialogue=dialogue[tag_match.end():].strip()
-        if dialogue: cues.append({'start':to_ms(match.groups()[:4]),'end':to_ms(match.groups()[4:]),'tag':tag,'text':dialogue})
+        if dialogue:
+            start_ms=to_ms(match.groups()[:4]); end_ms=to_ms(match.groups()[4:])
+            if end_ms <= start_ms: end_ms = start_ms + 350
+            cues.append({'start':start_ms,'end':end_ms,'tag':tag,'text':dialogue})
     return cues
 
 def run_async(coro):
@@ -291,7 +498,7 @@ with st.sidebar:
     st.subheader("🎭 Translation Style")
     translation_style = st.radio(
         "ជ្រើសរបៀបបកប្រែ",
-        ["🔴 Chinese Drama Pro", "⚪ 100% Audio Sync", "⚪ Standard"],
+        ["🔴 Chinese Drama Pro", "⚪ Whisper Timestamp Sync", "⚪ Standard"],
         key="translation_style",
     )
 
@@ -395,7 +602,7 @@ with tab_video:
                         progress_text.markdown(
                             f"### ✅ 100%  •  {minutes:02d}:{seconds:02d}"
                         )
-                        st.success("✅ Khmer SRT ready")
+                        st.success("✅ Khmer SRT ready • Timestamp ពិតពី Whisper")
 
                     except Exception as exc:
                         st.error(f"❌ {exc}")
@@ -421,8 +628,30 @@ with tab_video:
         if st.button("🧠 វិភាគការគិតក្នុងចិត្ត (Analyze Inner Thoughts)", key="analyze_thoughts"):
             if not st.session_state.srt_text.strip():
                 st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
+            elif not api_key:
+                st.error("សូមបញ្ចូល Gemini API Key នៅ Sidebar ជាមុន។")
             else:
-                st.info("✅ SRT ត្រៀមរួចសម្រាប់ស្លាក [M_THINK] និង [F_THINK]។")
+                analysis_video_path = None
+                try:
+                    if uploaded_video is not None:
+                        analysis_video_path = save_upload(uploaded_video)
+                    with st.spinner("កំពុងកែសន្ទនា និងវិភាគ ប្រុស/ស្រី/ក្មេង/ចាស់/ការគិតក្នុងចិត្ត…"):
+                        analyzed_srt = analyze_inner_thoughts(
+                            st.session_state.srt_text,
+                            api_key,
+                            model,
+                            analysis_video_path,
+                        )
+                    st.session_state.srt_text = analyzed_srt
+                    st.session_state.main_srt_editor = analyzed_srt
+                    st.session_state.audio_bytes = None
+                    st.success("✅ វិភាគ និងកែសម្រួល SRT រួចរាល់។ Timestamp ត្រូវបានរក្សាដដែល។")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"❌ {exc}")
+                finally:
+                    if analysis_video_path is not None:
+                        analysis_video_path.unlink(missing_ok=True)
     with c2:
         if st.session_state.srt_text:
             st.download_button(
@@ -473,13 +702,39 @@ with tab_translate:
         elif not api_key:
             st.error("សូមបញ្ចូល Gemini API Key នៅ Sidebar។")
         else:
-            client = genai.Client(api_key=api_key)
-            prompt = PROMPT + "\nKeep all original numbering and timestamps unchanged.\nSOURCE:\n" + source_srt
             try:
-                with st.spinner("កំពុងបកប្រែ…"):
-                    response = client.models.generate_content(model=model, contents=prompt)
-                    st.session_state.srt_text = clean_srt(response.text or "")
-                st.success("✅ បកប្រែរួចរាល់។")
+                source_cues = srt_to_structured_cues(source_srt)
+                if not source_cues:
+                    raise ValueError("Chinese SRT មិនត្រឹមត្រូវ។")
+                client = genai.Client(api_key=api_key)
+                translated_map = {}
+                for offset in range(0, len(source_cues), 35):
+                    batch = source_cues[offset:offset + 35]
+                    payload = "\n".join(
+                        f'ID={cue["id"]} | SOURCE={cue["text"]}' for cue in batch
+                    )
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=TRANSLATE_PROMPT + "\n\nCUES:\n" + payload,
+                    )
+                    for item in parse_json_array(response.text or ""):
+                        cue_id = int(item.get("id"))
+                        tag = str(item.get("tag", "M")).upper()
+                        if tag not in VOICE_PROFILES:
+                            tag = "M"
+                        translated_map[cue_id] = {"tag": tag, "text": str(item.get("text", "")).strip()}
+                blocks = []
+                for cue in source_cues:
+                    item = translated_map.get(cue["id"])
+                    if not item or not item["text"]:
+                        raise RuntimeError(f'បកប្រែមិនអស់បន្ទាត់ {cue["id"]}')
+                    blocks.append(
+                        f'{cue["id"]}\n{ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])}\n'
+                        f'[{item["tag"]}] {item["text"]}'
+                    )
+                st.session_state.srt_text = "\n\n".join(blocks)
+                st.session_state.main_srt_editor = st.session_state.srt_text
+                st.success("✅ បកប្រែរួចរាល់ និងរក្សា Timestamp ដើម។")
             except Exception as exc:
                 st.error(f"❌ {exc}")
 
