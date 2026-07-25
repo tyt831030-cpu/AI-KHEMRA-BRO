@@ -46,16 +46,17 @@ button[data-baseweb="tab"][aria-selected="true"]{background:linear-gradient(90de
 PISITH='km-KH-PisethNeural'
 SREYMOM='km-KH-SreymomNeural'
 VOICE_PROFILES={
-'M':{'voice':PISITH,'rate':'-4%','pitch':'+0Hz','volume':'+0%'},
-'F':{'voice':SREYMOM,'rate':'-4%','pitch':'+0Hz','volume':'+0%'},
-'BOY':{'voice':PISITH,'rate':'-1%','pitch':'+14Hz','volume':'+0%'},
-'GIRL':{'voice':SREYMOM,'rate':'-1%','pitch':'+16Hz','volume':'+0%'},
-'OLD_M':{'voice':PISITH,'rate':'-9%','pitch':'-10Hz','volume':'-1%'},
-'OLD_F':{'voice':SREYMOM,'rate':'-9%','pitch':'-9Hz','volume':'-1%'},
-'M_THINK':{'voice':PISITH,'rate':'-8%','pitch':'-4Hz','volume':'-5%'},
-'F_THINK':{'voice':SREYMOM,'rate':'-8%','pitch':'-3Hz','volume':'-5%'},
-'NARRATOR_M':{'voice':PISITH,'rate':'-6%','pitch':'-2Hz','volume':'+0%'},
-'NARRATOR_F':{'voice':SREYMOM,'rate':'-6%','pitch':'-1Hz','volume':'+0%'}
+# Clear, social-media friendly levels. Pitch changes stay small to avoid robotic voices.
+'M':{'voice':PISITH,'rate':'-3%','pitch':'+0Hz','volume':'+12%'},
+'F':{'voice':SREYMOM,'rate':'-3%','pitch':'+0Hz','volume':'+12%'},
+'BOY':{'voice':PISITH,'rate':'-1%','pitch':'+6Hz','volume':'+13%'},
+'GIRL':{'voice':SREYMOM,'rate':'-1%','pitch':'+7Hz','volume':'+13%'},
+'OLD_M':{'voice':PISITH,'rate':'-7%','pitch':'-5Hz','volume':'+13%'},
+'OLD_F':{'voice':SREYMOM,'rate':'-7%','pitch':'-4Hz','volume':'+13%'},
+'M_THINK':{'voice':PISITH,'rate':'-6%','pitch':'-2Hz','volume':'+8%'},
+'F_THINK':{'voice':SREYMOM,'rate':'-6%','pitch':'-2Hz','volume':'+8%'},
+'NARRATOR_M':{'voice':PISITH,'rate':'-4%','pitch':'-1Hz','volume':'+14%'},
+'NARRATOR_F':{'voice':SREYMOM,'rate':'-4%','pitch':'-1Hz','volume':'+14%'}
 }
 
 TRANSLATE_PROMPT = """You are an expert Chinese-drama Khmer dubbing translator and character continuity editor.
@@ -549,28 +550,57 @@ def create_mp3(srt_text):
         filters = []
         labels = []
         final_end_ms = 0
+        previous_end_ms = 0
 
         for index, cue in enumerate(cues):
-            slot_seconds = max(0.20, (cue['end'] - cue['start']) / 1000.0)
+            slot_seconds = max(0.25, (cue['end'] - cue['start']) / 1000.0)
             audio_seconds = clip_durations[index]
-            delay = max(0, cue['start'])
+
+            # Never allow two generated voices to talk over each other.
+            # A cue starts at its timestamp, or immediately after the previous
+            # voice finishes when the source timestamps overlap.
+            start_ms = max(0, cue['start'], previous_end_ms + (40 if index else 0))
+
+            # Fit only moderately. Extreme acceleration sounds robotic.
+            speed = audio_seconds / slot_seconds
+            tempo = ''
+            rendered_seconds = audio_seconds
+            if speed > 1.04:
+                safe_speed = min(speed, 1.32)
+                tempo = atempo_chain(safe_speed)
+                rendered_seconds = audio_seconds / safe_speed
+
             label = f'a{index}'
+            parts = [f'[{index}:a]asetpts=PTS-STARTPTS']
+            if tempo:
+                parts.append(tempo)
 
-            # Preserve a normal human speaking pace. Short clips are padded to
-            # their subtitle slot; longer clips are not aggressively accelerated.
-            # The short-dialogue AI pass is responsible for fitting most cues.
-            filters.append(
-                f'[{index}:a]asetpts=PTS-STARTPTS,'
-                f'apad=whole_dur={max(slot_seconds, audio_seconds):.3f},'
-                f'adelay={delay}|{delay}[{label}]'
-            )
+            # Normalize every voice clip before mixing so quiet narration and
+            # thought voices remain clearly audible.
+            parts.extend([
+                'highpass=f=70',
+                'lowpass=f=14500',
+                'loudnorm=I=-16:TP=-2:LRA=7',
+                'acompressor=threshold=-20dB:ratio=2.5:attack=8:release=100:makeup=2',
+                'afade=t=in:st=0:d=0.025',
+                f'afade=t=out:st={max(0.02, rendered_seconds-0.04):.3f}:d=0.04',
+                f'adelay={start_ms}|{start_ms}[{label}]',
+            ])
+            filters.append(','.join(parts).replace('],', ']'))
             labels.append(f'[{label}]')
-            final_end_ms = max(final_end_ms, cue['start'] + int(audio_seconds * 1000), cue['end'])
 
-        total = (final_end_ms + 500) / 1000.0
+            previous_end_ms = start_ms + int(rendered_seconds * 1000)
+            final_end_ms = max(final_end_ms, previous_end_ms, cue['end'])
+
+        total = (final_end_ms + 350) / 1000.0
+
+        # normalize=0 is crucial: default amix divides volume by the number of
+        # subtitle clips and can make a long video almost inaudible.
         filters.append(
             ''.join(labels)
-            + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0,'
+            + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
+              'alimiter=limit=0.92:attack=5:release=50,'
+              'loudnorm=I=-14:TP=-1.5:LRA=8,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
@@ -579,14 +609,16 @@ def create_mp3(srt_text):
             '-filter_complex', ';'.join(filters),
             '-map', '[out]',
             '-ac', '2',
-            '-ar', '44100',
-            '-b:a', '128k',
+            '-ar', '48000',
+            '-b:a', '192k',
             str(output),
         ])
 
-        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=900)
         if result.returncode != 0:
-            raise RuntimeError(result.stderr[-1500:] or 'FFmpeg failed.')
+            raise RuntimeError(result.stderr[-1800:] or 'FFmpeg failed.')
+        if not output.exists() or output.stat().st_size < 1000:
+            raise RuntimeError('MP3 ត្រូវបានបង្កើត ប៉ុន្តែមិនមានសំឡេងគ្រប់គ្រាន់។')
         return output.read_bytes()
 
 
@@ -750,9 +782,14 @@ with tab_video:
     )
     st.session_state.srt_text = st.session_state.main_srt_editor
 
-    c1, c2 = st.columns([1, 1])
+    # Keep both SRT action buttons on one row directly below the editor.
+    c1, c2 = st.columns(2, gap="small")
     with c1:
-        if st.button("🧠 វិភាគការគិតក្នុងចិត្ត (Analyze Inner Thoughts)", key="analyze_thoughts"):
+        if st.button(
+            "🧠 កែស្លាក និងអក្សរ SRT",
+            key="analyze_thoughts",
+            use_container_width=True,
+        ):
             if not st.session_state.srt_text.strip():
                 st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
             elif not api_key:
@@ -781,10 +818,18 @@ with tab_video:
     with c2:
         if st.session_state.srt_text:
             st.download_button(
-                "⬇️ Download SRT",
+                "⬇️ ដោនឡូត SRT",
                 st.session_state.srt_text.encode("utf-8"),
                 "khmer_story.srt",
                 "application/x-subrip",
+                use_container_width=True,
+            )
+        else:
+            st.button(
+                "⬇️ ដោនឡូត SRT",
+                disabled=True,
+                key="download_srt_disabled",
+                use_container_width=True,
             )
 
     st.markdown('<div class="section-title">2️⃣ AI Dubbing (Edge TTS Studio)</div>', unsafe_allow_html=True)
