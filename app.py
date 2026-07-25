@@ -52,31 +52,45 @@ footer{
 display:none!important;
 }
 
-/* Keep the sidebar arrow for opening the API-key panel. */
+/* White sidebar/API arrow on a black button, fixed at the top-left corner. */
 [data-testid="stSidebarCollapsedControl"]{
 position:fixed!important;
-top:7px!important;
-left:7px!important;
+top:8px!important;
+left:8px!important;
 right:auto!important;
 z-index:999999!important;
-width:34px!important;
-height:32px!important;
+width:42px!important;
+height:38px!important;
+display:flex!important;
+align-items:center!important;
+justify-content:center!important;
 }
 [data-testid="stSidebarCollapsedControl"] button{
-width:34px!important;
-height:32px!important;
-min-height:32px!important;
-padding:1px!important;
-border-radius:8px!important;
-background:rgba(15,23,42,.92)!important;
-border:1px solid rgba(34,211,238,.55)!important;
-box-shadow:0 2px 10px rgba(0,0,0,.30)!important;
+width:42px!important;
+height:38px!important;
+min-height:38px!important;
+padding:0!important;
+border-radius:11px!important;
+background:#050505!important;
+border:1px solid #2a2a2a!important;
+box-shadow:0 3px 12px rgba(0,0,0,.45)!important;
+display:flex!important;
+align-items:center!important;
+justify-content:center!important;
+opacity:1!important;
+}
+[data-testid="stSidebarCollapsedControl"] button:hover{
+background:#111111!important;
+border-color:#ffffff!important;
 }
 [data-testid="stSidebarCollapsedControl"] svg{
 display:block!important;
-width:18px!important;
-height:18px!important;
-color:#e5e7eb!important;
+width:22px!important;
+height:22px!important;
+color:#ffffff!important;
+fill:#ffffff!important;
+stroke:#ffffff!important;
+opacity:1!important;
 }
 
 /* Let the branded app header begin at the very top of the phone. */
@@ -121,16 +135,21 @@ padding:0 6px!important;
 }
 .section-title{font-size:26px}
 [data-testid="stSidebarCollapsedControl"]{
-top:5px!important;
-left:5px!important;
+top:6px!important;
+left:6px!important;
 right:auto!important;
-width:32px!important;
-height:30px!important;
+width:40px!important;
+height:36px!important;
 }
 [data-testid="stSidebarCollapsedControl"] button{
-width:32px!important;
-height:30px!important;
-min-height:30px!important;
+width:40px!important;
+height:36px!important;
+min-height:36px!important;
+border-radius:10px!important;
+}
+[data-testid="stSidebarCollapsedControl"] svg{
+width:21px!important;
+height:21px!important;
 }
 }
 </style>
