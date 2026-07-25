@@ -27,8 +27,10 @@ st.markdown('''
   --panel2:#182438;
   --text:#f8fafc;
   --muted:#9ca3af;
-  --cyan:#22d3ee;
-  --pink:#d900ff;
+  --cyan:#38bdf8;
+  --ocean:#0284c7;
+  --ocean2:#22d3ee;
+  --pink:#38bdf8;
 }
 .stApp{background:var(--bg);color:var(--text)}
 .block-container{max-width:1180px;padding-top:.55rem;padding-bottom:3rem}
@@ -36,9 +38,9 @@ st.markdown('''
 [data-testid="stStatusWidget"],#MainMenu,footer{display:none!important}
 
 .hero{
-  border:2px solid var(--pink);border-radius:24px;padding:34px 18px;
+  border:2px solid var(--ocean2);border-radius:24px;padding:34px 18px;
   text-align:center;background:linear-gradient(145deg,#17171d,#0b1018);
-  box-shadow:0 0 24px rgba(217,0,255,.22);margin:0 0 18px;
+  box-shadow:0 0 24px rgba(34,211,238,.24);margin:0 0 18px;
 }
 .hero h1{font-size:44px;margin:0 0 8px;font-weight:900;white-space:nowrap;line-height:1.05}
 .hero p{margin:0;color:#23c8ef;font-weight:800;letter-spacing:1.5px}
@@ -47,9 +49,12 @@ st.markdown('''
 .side-ok{background:#073d31;border:1px solid #10b981;border-radius:12px;padding:12px;margin:10px 0}
 .stButton>button{
   width:100%;min-height:48px;border:0;border-radius:11px;color:white;
-  font-weight:850;font-size:15px;background:linear-gradient(90deg,#9b1bd1,#ec00ff)
+  font-weight:850;font-size:15px;background:linear-gradient(90deg,#0284c7,#22d3ee)
 }
-.stDownloadButton>button{width:100%;min-height:46px;border-radius:11px;font-weight:800}
+.stButton>button:hover,.stDownloadButton>button:hover{
+  filter:brightness(1.08);transform:translateY(-1px);border-color:#a5f3fc!important;
+}
+.stDownloadButton>button{width:100%;min-height:46px;border:0!important;border-radius:11px!important;font-weight:850!important;color:white!important;background:linear-gradient(90deg,#0284c7,#22d3ee)!important;box-shadow:0 6px 18px rgba(2,132,199,.22)!important}
 .st-key-generate_srt, .st-key-generate_srt > div, .st-key-generate_srt button{width:100%!important;max-width:100%!important;display:block!important;box-sizing:border-box!important}
 div[data-testid="stFileUploader"]{background:#eef2f7;border-radius:12px;padding:8px}
 div[data-testid="stTextArea"] textarea{
@@ -80,13 +85,13 @@ button[data-baseweb="tab"]{
   line-height:1.2!important;
 }
 button[data-baseweb="tab"][aria-selected="true"]{
-  background:linear-gradient(90deg,#a51bd4,#e800ff)!important;
-  border-color:#f05cff!important;
+  background:linear-gradient(90deg,#0284c7,#22d3ee)!important;
+  border-color:#67e8f9!important;
   color:white!important;
-  box-shadow:0 5px 16px rgba(217,0,255,.24)!important;
+  box-shadow:0 5px 16px rgba(2,132,199,.28)!important;
 }
 .clear-wrap .stButton>button{
-  background:linear-gradient(90deg,#08bce3,#12d6ef);color:#00141b;font-weight:900
+  background:linear-gradient(90deg,#0369a1,#22d3ee);color:#ffffff;font-weight:900
 }
 
 /* One stable professional menu button: white 3-line icon on black. */
@@ -163,7 +168,7 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
   margin:8px 0 0!important;
   padding:0!important;
   border-radius:13px!important;
-  background:#d900ff!important;
+  background:#0ea5e9!important;
   box-sizing:border-box!important;
 }
 .st-key-srt_actions div[data-testid="stHorizontalBlock"]{
@@ -219,7 +224,7 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
   line-height:1.05!important;
   font-size:clamp(10px,3vw,16px)!important;
   box-sizing:border-box!important;
-  background:linear-gradient(90deg,#a51bd4,#ec00ff)!important;
+  background:linear-gradient(90deg,#0284c7,#22d3ee)!important;
 }
 .st-key-srt_actions div[data-testid="column"]:first-child button,
 .st-key-srt_actions div[data-testid="stColumn"]:first-child button{
@@ -271,9 +276,9 @@ VOICE_PROFILES={
 'NARRATOR_F':{'voice':SREYMOM,'rate':'-4%','pitch':'-1Hz','volume':'+14%'}
 }
 
-TRANSLATE_PROMPT = """You are an expert Chinese-drama Khmer dubbing translator and character continuity editor.
+TRANSLATE_PROMPT = """You are an expert Khmer movie subtitler, Chinese-drama translator, dubbing script writer, and character-continuity editor.
 The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
-Use the uploaded video to identify the visible speaker, voice source, age, gender, narration, and inner thought.
+Use the uploaded video to identify the actual speaker, voice source, age, gender, social rank, relationship, narration, and inner thought.
 
 Return a JSON array only. Each object must contain exactly:
 {"id": integer, "tag": string, "text": string}
@@ -281,26 +286,42 @@ Return a JSON array only. Each object must contain exactly:
 Allowed tags:
 M, F, BOY, GIRL, OLD_M, OLD_F, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
 
-SPEAKER RULES:
-- Assign the tag from the person who is actually speaking, not merely the person visible on screen.
-- Keep the same recurring character on the same adult/child/elderly and male/female tag across nearby cues.
-- Use M or F for ordinary spoken dialogue, including calm and light scenes.
-- Use M_THINK or F_THINK only when the line is an unheard inner thought or internal monologue.
-- Use NARRATOR tags only for off-screen narration that is not a character thought.
-- Use child and elderly tags only when clearly supported by voice and visual context.
-- Do not classify a whisper, calm speech, or sad speech as inner thought unless it is not spoken aloud.
+SPEAKER AND CHARACTER RULES:
+- Assign the tag to the person who is actually speaking, not merely the person visible on screen.
+- Keep each recurring character on a consistent gender/age/role tag across nearby cues.
+- Use M or F for normal audible dialogue, including calm, sad, angry, soft, romantic, or whispered speech.
+- Use M_THINK or F_THINK only for an unheard inner thought or internal monologue.
+- Use NARRATOR tags only for true off-screen narration, not for a character's thought.
+- Use BOY/GIRL and OLD_M/OLD_F only when the voice or visual context clearly supports it.
 
-KHMER LENGTH RULES:
-- Translate into short, natural spoken Khmer, not formal writing and not word-for-word translation.
+PROFESSIONAL KHMER TRANSLATION RULES:
+- Translate into natural spoken Khmer used by Cambodian people in real daily conversation.
+- Never translate word-for-word and never produce stiff, dry, book-like Khmer.
+- Preserve the original meaning, intention, emotion, humor, threat, sarcasm, romance, fear, grief, status, and relationship.
+- You may reorder, shorten, combine wording inside the same cue, or add a tiny natural connector when needed, but never change the meaning.
+- Choose pronouns and forms of address that fit age, gender, rank, relationship, and scene context, such as: បង/អូន, ខ្ញុំ/លោក, ឯង/អញ, ពួកម៉ាក, សម្លាញ់, លោកគ្រូ, សិស្ស, ព្រះអង្គ, អធិរាជ, ម្ចាស់, មេទ័ព, លោកតា, លោកយាយ.
+- Use natural Khmer emotion particles only when suitable, for example: ណា, ណ៎, ចា៎, ចុះ, អញ្ចឹង, ហ្នឹង, មែនទេ, វើយ, ហ្មង, ហាស, អូហ៍.
+- Do not overuse slang, insults, or particles. Match the actor's personality and the scene.
+- For historical, cultivation, martial-arts, palace, fantasy, or modern-drama terms, choose Khmer wording that viewers understand while keeping names and ranks consistent.
+- If a source phrase contains an idiom, joke, hidden meaning, or wordplay, recreate the intended effect naturally in Khmer instead of translating the literal words.
+- Do not leave Chinese characters, pinyin, English explanation, translator notes, or brackets inside the Khmer dialogue.
+
+EMOTION AND DUBBING RULES:
+- Write each line so that Khmer AI speech sounds smooth, emotional, and easy to pronounce.
+- Use punctuation naturally to guide pauses and breathing, but avoid excessive punctuation.
+- Make angry lines firm, sad lines gentle, romantic lines warm, fearful lines urgent, and comic lines lively.
+- Avoid awkward repeated words, robotic phrasing, and long formal constructions.
+
+SUBTITLE LENGTH RULES:
 - Each cue includes MAX_WORDS. The Khmer text MUST stay at or below that word limit.
-- Preserve the core meaning, emotion, names, ranks, relationship, and pronouns while removing repetition and filler.
-- Prefer one concise spoken sentence. Never add explanations.
-- No Chinese characters in the Khmer text.
+- Prefer one short, clear spoken sentence per cue.
+- Keep the core meaning and emotional force while removing unnecessary repetition and filler.
+- Never merge, split, omit, or renumber cues.
 
 OUTPUT RULES:
-- Return exactly one object for every supplied cue ID in the same order.
-- Never invent, merge, split, omit, or renumber cues.
-- JSON only. No markdown fences or explanation.
+- Return exactly one object for every supplied cue ID, in the same order.
+- Every text value must be fluent Khmer suitable for professional movie subtitles and dubbing.
+- JSON only. No markdown fences, headings, comments, or explanation.
 """
 
 ANALYZE_PROMPT = """You are a Chinese-drama Khmer dubbing continuity editor.
@@ -318,7 +339,7 @@ Rules:
 - Ordinary audible dialogue must remain M or F, even when calm, soft, sad, angry, or whispering.
 - Use THINK only for unheard internal monologue; use NARRATOR only for true narration.
 - Use BOY/GIRL and OLD_M/OLD_F only when age is clearly supported.
-- Rewrite Khmer into concise, natural spoken dialogue.
+- Rewrite Khmer into fluent, natural spoken Cambodian dialogue suitable for professional movie dubbing; never use stiff word-for-word phrasing.
 - Respect each cue's MAX_WORDS strictly so dubbing can play at a normal pace.
 - Preserve meaning and emotion but remove repeated, explanatory, or unnecessary words.
 - JSON only. No explanations or markdown.
@@ -1190,11 +1211,11 @@ with tab_video:
                         minutes = int(elapsed // 60)
                         seconds = int(elapsed % 60)
 
-                        progress_bar.progress(100)
-                        progress_text.markdown(
-                            f"### ✅ 100%  •  {minutes:02d}:{seconds:02d}"
-                        )
-                        st.success("✅ Khmer SRT ready • ស្លាកតួអង្គស្ថិតស្ថេរ • ឃ្លាខ្លីសម្រាប់សំឡេងធម្មតា")
+                        # Completion indicators are temporary. Remove them immediately
+                        # so the finished SRT editor becomes the only visible result.
+                        progress_bar.empty()
+                        progress_text.empty()
+                        st.rerun()
 
                     except Exception as exc:
                         progress_bar.empty()
