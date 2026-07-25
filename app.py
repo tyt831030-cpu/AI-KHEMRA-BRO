@@ -447,6 +447,8 @@ for key,value in {
     'pending_editor_update':None,
     'source_video_stem':'khmer_story',
     'mp3_download_name':'khmer_story_dubbed',
+    'video_uploader_version':0,
+    'project_temp_files':[],
 }.items():
     if key not in st.session_state:
         st.session_state[key]=value
@@ -1140,7 +1142,7 @@ with tab_video:
         "Upload Video",
         type=["mp4", "mov", "mkv", "webm"],
         help="MP4 ត្រូវបានណែនាំសម្រាប់ 4G និងទូរស័ព្ទ។",
-        key="main_video_upload",
+        key=f"main_video_upload_{st.session_state.video_uploader_version}",
     )
 
     if uploaded_video is not None:
@@ -1164,6 +1166,7 @@ with tab_video:
                     st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
                 else:
                     video_path = save_upload(uploaded_video)
+                    st.session_state.project_temp_files.append(str(video_path))
                     try:
                         progress_bar = st.progress(1)
                         progress_text = st.empty()
@@ -1362,6 +1365,16 @@ with tab_video:
 
     st.markdown('<div class="clear-wrap">', unsafe_allow_html=True)
     if st.button("🗑️ សម្អាត (Clear Video Project)", key="clear_project"):
+        # Delete only this user's temporary files. API keys/cookies are kept.
+        for temp_name in st.session_state.get("project_temp_files", []):
+            try:
+                temp_path = Path(temp_name)
+                if temp_path.exists() and temp_path.is_file():
+                    temp_path.unlink()
+            except OSError:
+                pass
+
+        st.session_state.project_temp_files = []
         st.session_state.srt_text = ""
         st.session_state.pending_srt = ""
         st.session_state.audio_bytes = None
@@ -1369,6 +1382,12 @@ with tab_video:
         st.session_state.pending_editor_update = ""
         st.session_state.source_video_stem = "khmer_story"
         st.session_state.mp3_download_name = "khmer_story_dubbed"
+
+        # Give file_uploader a brand-new widget key so the selected video
+        # disappears immediately on iPhone, Android and desktop browsers.
+        st.session_state.video_uploader_version = (
+            int(st.session_state.get("video_uploader_version", 0)) + 1
+        )
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
