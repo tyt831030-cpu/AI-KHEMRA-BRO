@@ -2,6 +2,8 @@ import asyncio
 import base64
 import datetime
 import hashlib
+import hmac
+import json
 import re
 import shutil
 import subprocess
@@ -365,6 +367,117 @@ else:
 fernet_key = base64.urlsafe_b64encode(hashlib.sha256(raw_cookie_secret.encode("utf-8")).digest())
 api_cipher = Fernet(fernet_key)
 cookie_manager = stx.CookieManager(key="ai_khemra_private_cookie_manager")
+
+# Public contact links shown on the login page and inside the app.
+FACEBOOK_URL = "https://www.facebook.com/share/1Ehf5Fo8Ma/?mibextid=wwXIfr"
+TELEGRAM_URL = "https://t.me/KHEAMRA"
+AUTH_COOKIE_NAME = "ai_khemra_bro_login"
+
+
+def _configured_login():
+    """Read login credentials from Streamlit Secrets with safe working defaults."""
+    try:
+        username = str(st.secrets.get("APP_USERNAME", "kheamra")).strip()
+        password = str(st.secrets.get("APP_PASSWORD", "Khemra@2026"))
+    except Exception:
+        username, password = "kheamra", "Khemra@2026"
+    return username or "kheamra", password or "Khemra@2026"
+
+
+def _make_auth_token(username):
+    payload = {
+        "u": username,
+        "exp": int(time.time()) + (30 * 24 * 60 * 60),
+    }
+    return api_cipher.encrypt(json.dumps(payload).encode("utf-8")).decode("utf-8")
+
+
+def _auth_token_is_valid(token):
+    if not token:
+        return False
+    try:
+        data = json.loads(api_cipher.decrypt(str(token).encode("utf-8")).decode("utf-8"))
+        configured_user, _ = _configured_login()
+        return (
+            hmac.compare_digest(str(data.get("u", "")), configured_user)
+            and int(data.get("exp", 0)) > int(time.time())
+        )
+    except Exception:
+        return False
+
+
+def _save_auth_cookie(username):
+    try:
+        cookie_manager.set(
+            AUTH_COOKIE_NAME,
+            _make_auth_token(username),
+            expires_at=datetime.datetime.now() + datetime.timedelta(days=30),
+            key="save_login_cookie",
+        )
+    except Exception:
+        pass
+
+
+def _logout_auth():
+    st.session_state.authenticated = False
+    try:
+        cookie_manager.delete(AUTH_COOKIE_NAME, key="delete_login_cookie")
+    except Exception:
+        pass
+
+
+def render_contact_buttons(prefix="public"):
+    left, right = st.columns(2)
+    with left:
+        st.link_button("📘 Facebook", FACEBOOK_URL, use_container_width=True)
+    with right:
+        st.link_button("✈️ Telegram", TELEGRAM_URL, use_container_width=True)
+
+
+def require_login():
+    """Display the public contact page and stop the private app until login succeeds."""
+    if "authenticated" not in st.session_state:
+        try:
+            st.session_state.authenticated = _auth_token_is_valid(
+                cookie_manager.get(AUTH_COOKIE_NAME)
+            )
+        except Exception:
+            st.session_state.authenticated = False
+
+    if st.session_state.authenticated:
+        return
+
+    st.markdown(
+        '<div class="hero"><h1>AI KHEMRA BRO</h1>'
+        '<p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p>'
+        '<div style="margin-top:16px;color:#d8f7ff;font-size:16px;font-weight:700">'
+        'ចុចតំណខាងក្រោម ដើម្បីទាក់ទងម្ចាស់កម្មវិធី</div></div>',
+        unsafe_allow_html=True,
+    )
+    render_contact_buttons("login")
+
+    st.markdown('<div class="section-title">🔐 ចូលប្រើកម្មវិធី</div>', unsafe_allow_html=True)
+    with st.form("secure_login_form", clear_on_submit=False):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        remember = st.checkbox("រក្សាទុកការចូលប្រើ 30 ថ្ងៃ", value=True)
+        submitted = st.form_submit_button("Login", use_container_width=True)
+
+    if submitted:
+        expected_user, expected_password = _configured_login()
+        valid = hmac.compare_digest(username.strip(), expected_user) and hmac.compare_digest(
+            password, expected_password
+        )
+        if valid:
+            st.session_state.authenticated = True
+            if remember:
+                _save_auth_cookie(expected_user)
+            st.rerun()
+        else:
+            st.error("❌ Username ឬ Password មិនត្រឹមត្រូវ។")
+
+    st.caption("អ្នកមិនទាន់ Login មិនអាចប្រើមុខងារបកប្រែ បង្កើត SRT ឬ MP3 បានទេ។")
+    st.stop()
 
 
 def encrypt_api_keys(api_keys_text):
@@ -1079,6 +1192,8 @@ def create_mp3(srt_text, progress_callback=None):
 
 
 
+require_login()
+
 # Read this browser's saved key once per Streamlit session.
 if "api_keys_manager" not in st.session_state:
     st.session_state.api_keys_manager = load_private_api_keys()
@@ -1138,6 +1253,10 @@ with st.container(key="api_menu_container"):
         else:
             st.info("បញ្ចូល API Key រួចចុច «រក្សាទុក»។")
 
+        if st.button("🚪 ចាកចេញពីគណនី", key="logout_account", use_container_width=True):
+            _logout_auth()
+            st.rerun()
+
         st.divider()
         st.selectbox("🌍 Target Language", ["Khmer (ខ្មែរ)"], key="target_language")
         st.radio(
@@ -1164,6 +1283,7 @@ st.markdown(
     '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
     unsafe_allow_html=True,
 )
+render_contact_buttons("inside")
 
 tab_video, tab_translate, tab_srt_speech, tab_text_speech = st.tabs(
     ["🎬 Video → SRT", "📝 AI Subtitle Translator", "📜 SRT → Speech", "🎙️ Text → Speech"]
