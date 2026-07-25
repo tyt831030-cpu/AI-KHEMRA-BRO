@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import edge_tts
 import streamlit as st
@@ -51,18 +52,44 @@ VOICE_PROFILES={
 'OLD_M':{'voice':PISITH,'rate':'-12%','pitch':'-18Hz','volume':'-2%'},
 'OLD_F':{'voice':SREYMOM,'rate':'-12%','pitch':'-15Hz','volume':'-2%'},
 'M_THINK':{'voice':PISITH,'rate':'-8%','pitch':'-8Hz','volume':'-12%'},
-'F_THINK':{'voice':SREYMOM,'rate':'-8%','pitch':'-6Hz','volume':'-12%'}}
+'F_THINK':{'voice':SREYMOM,'rate':'-8%','pitch':'-6Hz','volume':'-12%'},
+'NARRATOR_M':{'voice':PISITH,'rate':'-3%','pitch':'-3Hz','volume':'+0%'},
+'NARRATOR_F':{'voice':SREYMOM,'rate':'-3%','pitch':'-2Hz','volume':'+0%'}}
 
-PROMPT='''You are an expert Chinese-drama subtitle translator for Khmer dubbing.
-Listen to all spoken dialogue in the uploaded Chinese video and return valid Khmer SRT only.
-Rules:
-1. Keep accurate SRT numbering and timestamps.
-2. Do not skip short dialogue.
-3. Translate into natural spoken Khmer suitable for Chinese drama dubbing.
-4. Add exactly one speaker tag at the beginning of every subtitle line.
-5. Allowed tags only: [M] [F] [BOY] [GIRL] [OLD_M] [OLD_F] [M_THINK] [F_THINK]
-6. No markdown fences or explanations.
-7. No Chinese characters in the Khmer dialogue.'''
+PROMPT='''You are an expert Chinese-drama subtitle translator and dubbing director.
+
+Analyze BOTH the audio and visible character context in the uploaded video.
+Return valid Khmer SRT only.
+
+TIMING RULES:
+1. Each timestamp must begin when the spoken line begins and end when it ends.
+2. Do not overlap neighboring cues unless two characters truly speak at the same time.
+3. Do not skip whispers, short replies, cries, or inner thoughts.
+4. Keep cue order strictly chronological.
+5. Use SRT time format exactly: 00:00:00,000 --> 00:00:03,000.
+
+KHMER RULES:
+6. Translate into natural spoken Khmer for Chinese drama dubbing.
+7. Preserve names, rank, age, relationship, emotion, and pronouns consistently.
+8. No Chinese characters in the Khmer dialogue.
+
+SPEAKER RULES:
+9. Add exactly one tag at the beginning of every subtitle dialogue.
+10. Keep the same character tag consistent across nearby cues.
+11. Inner monologue or unheard thought must use M_THINK or F_THINK.
+12. A visible speaking child must use BOY or GIRL.
+13. An elderly speaker must use OLD_M or OLD_F.
+14. Normal adult dialogue must use M or F.
+15. Narration must use NARRATOR_M or NARRATOR_F.
+
+Allowed tags only:
+[M] [F] [BOY] [GIRL] [OLD_M] [OLD_F]
+[M_THINK] [F_THINK] [NARRATOR_M] [NARRATOR_F]
+
+OUTPUT RULES:
+16. Output SRT only.
+17. No markdown fences and no explanation.
+'''
 
 for key,value in {
     'srt_text':'',
@@ -100,7 +127,7 @@ def video_to_srt(video_path,api_key,model):
 
 def parse_srt(srt_text):
     time_re=re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
-    tag_re=re.compile(r'^\[(M|F|BOY|GIRL|OLD_M|OLD_F|M_THINK|F_THINK)\]\s*',re.I)
+    tag_re=re.compile(r'^\[(M|F|BOY|GIRL|OLD_M|OLD_F|M_THINK|F_THINK|NARRATOR_M|NARRATOR_F)\]\s*',re.I)
     def to_ms(v):
         h,m,s,ms=map(int,v); return ((h*60+m)*60+s)*1000+ms
     cues=[]
@@ -126,25 +153,111 @@ def run_async(coro):
 async def synthesize(text,profile,output_path):
     await edge_tts.Communicate(text=text,voice=profile['voice'],rate=profile['rate'],pitch=profile['pitch'],volume=profile['volume']).save(str(output_path))
 
+def probe_audio_duration(path):
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr[-500:] or "FFprobe failed.")
+    return max(0.01, float(result.stdout.strip()))
+
+
+def atempo_chain(speed):
+    """Build a valid FFmpeg atempo chain for speed factors above 1."""
+    factors = []
+    remaining = max(1.0, float(speed))
+    while remaining > 2.0:
+        factors.append(2.0)
+        remaining /= 2.0
+    if remaining > 1.001:
+        factors.append(remaining)
+    return ",".join(f"atempo={value:.5f}" for value in factors)
+
+
 def create_mp3(srt_text):
-    cues=parse_srt(srt_text)
-    if not cues: raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
+    cues = parse_srt(srt_text)
+    if not cues:
+        raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
+
     with tempfile.TemporaryDirectory() as folder:
-        root=Path(folder); clips=[]
-        for index,cue in enumerate(cues):
-            clip=root/f'clip_{index:04d}.mp3'; run_async(synthesize(cue['text'],VOICE_PROFILES.get(cue['tag'],VOICE_PROFILES['M']),clip)); clips.append(clip)
-        command=['ffmpeg','-y']
-        for clip in clips: command.extend(['-i',str(clip)])
-        filters=[]; labels=[]
-        for index,cue in enumerate(cues):
-            duration=max(0.1,(cue['end']-cue['start'])/1000); delay=max(0,cue['start']); label=f'a{index}'
-            filters.append(f'[{index}:a]atrim=0:{duration:.3f},asetpts=PTS-STARTPTS,adelay={delay}|{delay}[{label}]'); labels.append(f'[{label}]')
-        total=(max(c['end'] for c in cues)+500)/1000
-        filters.append(''.join(labels)+f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0,apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]')
-        output=root/'khmer_dubbed.mp3'
-        command.extend(['-filter_complex',';'.join(filters),'-map','[out]','-ac','2','-ar','44100','-b:a','128k',str(output)])
-        result=subprocess.run(command,capture_output=True,text=True,timeout=600)
-        if result.returncode!=0: raise RuntimeError(result.stderr[-1200:] or 'FFmpeg failed.')
+        root = Path(folder)
+        clips = []
+        clip_durations = []
+
+        for index, cue in enumerate(cues):
+            clip = root / f'clip_{index:04d}.mp3'
+            profile = VOICE_PROFILES.get(cue['tag'], VOICE_PROFILES['M'])
+            run_async(synthesize(cue['text'], profile, clip))
+            clips.append(clip)
+            clip_durations.append(probe_audio_duration(clip))
+
+        command = ['ffmpeg', '-y']
+        for clip in clips:
+            command.extend(['-i', str(clip)])
+
+        filters = []
+        labels = []
+
+        for index, cue in enumerate(cues):
+            slot_seconds = max(0.12, (cue['end'] - cue['start']) / 1000)
+            original_seconds = clip_durations[index]
+            delay = max(0, cue['start'])
+            label = f'a{index}'
+
+            chain = [f'[{index}:a]', 'asetpts=PTS-STARTPTS']
+
+            # Speed up only when the generated speech is longer than its SRT slot.
+            # This avoids cutting off the end of sentences.
+            speed = original_seconds / slot_seconds
+            if speed > 1.03:
+                tempo = atempo_chain(speed)
+                if tempo:
+                    chain.append(tempo)
+
+            chain.extend([
+                f'atrim=0:{slot_seconds:.3f}',
+                f'apad=whole_dur={slot_seconds:.3f}',
+                f'atrim=0:{slot_seconds:.3f}',
+                f'adelay={delay}|{delay}[{label}]',
+            ])
+
+            filters.append(','.join(chain).replace('],', ']'))
+            labels.append(f'[{label}]')
+
+        total = (max(c['end'] for c in cues) + 500) / 1000
+        filters.append(
+            ''.join(labels)
+            + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0,'
+              f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
+        )
+
+        output = root / 'khmer_dubbed.mp3'
+        command.extend([
+            '-filter_complex', ';'.join(filters),
+            '-map', '[out]',
+            '-ac', '2',
+            '-ar', '44100',
+            '-b:a', '128k',
+            str(output),
+        ])
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr[-1500:] or 'FFmpeg failed.')
+
         return output.read_bytes()
 
 
@@ -232,31 +345,65 @@ with tab_video:
                 else:
                     video_path = save_upload(uploaded_video)
                     try:
-                        with st.status("កំពុងបង្កើតអក្សរខ្មែរ…", expanded=True) as status:
-                            st.write("📤 Uploading video...")
-                            st.write("🎧 Listening to Chinese dialogue...")
-                            st.write("🌐 Translating into natural Khmer...")
-                            st.session_state.pending_srt = video_to_srt(video_path, api_key, model)
-                            st.session_state.audio_bytes = None
-                            status.update(label="✅ Khmer SRT ready", state="complete")
+                        progress_bar = st.progress(1)
+                        progress_text = st.empty()
+                        started_at = time.time()
+
+                        # Run the AI task in another thread so the page can keep
+                        # updating the percentage and elapsed time.
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(
+                                video_to_srt,
+                                video_path,
+                                api_key,
+                                model,
+                            )
+
+                            # Estimate only; the real finish time depends on 4G,
+                            # video duration, Gemini processing and server load.
+                            estimated_seconds = max(45.0, min(600.0, 35.0 + (size_mb * 5.0)))
+
+                            while not future.done():
+                                elapsed = time.time() - started_at
+                                percent = min(
+                                    95,
+                                    max(1, int((elapsed / estimated_seconds) * 95)),
+                                )
+                                minutes = int(elapsed // 60)
+                                seconds = int(elapsed % 60)
+
+                                progress_bar.progress(percent)
+                                progress_text.markdown(
+                                    f"### ⏱️ {percent}%  •  "
+                                    f"{minutes:02d}:{seconds:02d}"
+                                )
+                                time.sleep(0.5)
+
+                            generated_srt = future.result()
+
+                        # Automatically place the completed Khmer SRT into the
+                        # existing editor when progress reaches 100%.
+                        st.session_state.srt_text = generated_srt
+                        st.session_state.main_srt_editor = generated_srt
+                        st.session_state.pending_srt = ""
+                        st.session_state.audio_bytes = None
+                        elapsed = time.time() - started_at
+                        minutes = int(elapsed // 60)
+                        seconds = int(elapsed % 60)
+
+                        progress_bar.progress(100)
+                        progress_text.markdown(
+                            f"### ✅ 100%  •  {minutes:02d}:{seconds:02d}"
+                        )
+                        st.success("✅ Khmer SRT ready")
+
                     except Exception as exc:
                         st.error(f"❌ {exc}")
                     finally:
                         video_path.unlink(missing_ok=True)
 
-    if st.session_state.pending_srt:
-        if st.button(
-            "📥 ទាញអក្សរខ្មែរ SRT ចូលប្រអប់",
-            key="pull_generated_srt",
-            use_container_width=True,
-        ):
-            st.session_state.srt_text = st.session_state.pending_srt
-            st.session_state.main_srt_editor = st.session_state.pending_srt
-            st.session_state.pending_srt = ""
-            st.rerun()
-
     st.subheader("Generated SRT")
-    st.caption("You can edit the SRT here before generating audio:")
+    st.caption("SRT នឹងចូលប្រអប់នេះដោយស្វ័យប្រវត្តិ ពេលដំណើរការដល់ 100%។ អ្នកអាចកែបានមុន Generate MP3។")
 
     if "main_srt_editor" not in st.session_state:
         st.session_state.main_srt_editor = st.session_state.srt_text
