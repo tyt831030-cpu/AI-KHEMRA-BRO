@@ -17,3 +17,10 @@ Upload all files to the root of the existing GitHub repository and commit. Strea
 - THINK only for unheard inner monologue
 - Short Khmer dialogue based on cue duration
 - Natural-speed MP3 without aggressive time compression
+
+
+## Audio Loudness Fix
+- Prevents amix from reducing volume across many subtitle clips.
+- Normalizes output to social-media-friendly loudness.
+- Prevents generated character voices from overlapping.
+- Uses subtle age/child pitch settings to reduce robotic sound.
