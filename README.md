@@ -1,46 +1,53 @@
-# AI KHEMRA BRO
+# AI KHEMRA BRO — Full UI + Private Admin
 
-កម្មវិធី Streamlit សម្រាប់បកប្រែវីដេអូទៅជាអក្សររងភាសាខ្មែរ និងបង្កើតសំឡេង MP3 ជាមួយប្រព័ន្ធ Customer License ឯកជន។
+This build keeps the full original UI and features from `app(28).py` and adds private customer licensing.
 
-## Files
+## Public customer flow
+- Customer enters registered name and Access Code.
+- Valid, active, unexpired licenses unlock the full Video → SRT → MP3 application.
+- Expired, blocked, or invalid licenses are rejected automatically.
 
-- `app.py` — UI ដើម និងមុខងារ AI ទាំងអស់ ព្រមទាំងប្រព័ន្ធ License
-- `requirements.txt` — Python packages
-- `packages.txt` — System package (`ffmpeg`)
-- `README.md` — សេចក្ដីណែនាំ
+## Private owner flow
+1. On the customer login screen, tap the small `✦` control at the top-right five times.
+2. Enter the owner name and password.
+3. Create customer codes for 7 days, 30 days, or 365 days.
+4. Renew, block/unblock, or delete customer codes.
 
-## Streamlit Secrets
+## Streamlit Secrets (recommended)
+Add these in Streamlit Cloud → App settings → Secrets:
 
-បើក Streamlit Community Cloud → App settings → Secrets ហើយបញ្ចូល៖
+```toml
+ADMIN_USERNAME = "KHEMRA"
+ADMIN_PASSWORD = "YOUR_PRIVATE_PASSWORD"
+COOKIE_SECRET = "A-LONG-RANDOM-PRIVATE-SECRET"
+```
+
+The file contains the requested initial fallback credentials so it can run immediately. Using Streamlit Secrets is safer because public GitHub source can be viewed.
+
+## Install
+Upload these four files to the root of the existing GitHub repository:
+- `app.py`
+- `requirements.txt`
+- `packages.txt`
+- `README.md`
+
+Set the Streamlit main file path to `app.py`.
+
+## Database note
+`licenses.db` is created automatically. Streamlit Community Cloud local files may reset after restart/redeploy. For long-term paid use, move licenses to Supabase/PostgreSQL.
+
+
+## Private Admin / License Setup
+
+Add these values in Streamlit Community Cloud → App settings → Secrets:
 
 ```toml
 ADMIN_USERNAME = "KHEMRA"
 ADMIN_PASSWORD = "0719067125"
+COOKIE_SECRET = "replace-with-a-long-random-private-secret"
 ```
 
-សម្រាប់សុវត្ថិភាព កុំដាក់លេខសម្ងាត់នៅក្នុង GitHub repository សាធារណៈ។ អ្នកអាចប្តូរ `ADMIN_PASSWORD` នៅក្នុង Secrets ពេលណាក៏បាន។
+Owner access: click the small top-right ✦ control five times, then sign in.
+The original AI KHEMRA BRO workflow remains unchanged after customer login.
 
-## Owner access
-
-1. បើក App ធម្មតា។
-2. ចុចសញ្ញាតូចនៅជ្រុងខាងស្តាំលើ 5 ដង។
-3. បញ្ចូល Owner username និង password។
-4. បង្កើត Customer ដោយជ្រើស 7 ថ្ងៃ, 30 ថ្ងៃ ឬ 1 ឆ្នាំ។
-5. ចុច `COPY NAME + CODE` ម្តង ដើម្បី Copy ទាំងឈ្មោះ និងលេខកូដ។
-
-ប្រអប់លេខកូដថ្មីលាក់ដោយស្វ័យប្រវត្តិក្រោយ 24 ម៉ោង ប៉ុន្តែ License នៅតែមានរហូតដល់ថ្ងៃផុតកំណត់។
-
-## Customer access
-
-Customer បញ្ចូលតែ៖
-
-- Name
-- Access Code
-
-លេខកូដមួយអាចមាន Active Session តែមួយក្នុងពេលតែមួយ។ បើ Browser មិនមានសកម្មភាពលើស 10 នាទី Session ចាស់ត្រូវបានចាត់ទុកថាផុតសកម្មភាព ហើយអាចចូលពីឧបករណ៍ថ្មីបាន។ Owner ក៏អាចចុច `ផ្តាច់ Session` បាន។
-
-## Deploy
-
-Upload ឯកសារទាំង 4 ទៅ GitHub root ហើយ Deploy `app.py` នៅ Streamlit Community Cloud។
-
-> ចំណាំ៖ SQLite នៅលើ Streamlit Community Cloud អាចត្រូវបាន reset ពេល App redeploy/restart។ សម្រាប់ការលក់ជាផ្លូវការនិងរក្សាទិន្នន័យយូរ គួរប្តូរ Database ទៅ PostgreSQL ឬ Supabase។
+License features: 7 days, 30 days, 365 days, combined Name + Code copy, 24-hour temporary new-code card, renew/disable/force-release, protected deletion, expiry checks, and one active session per license.
