@@ -2,7 +2,10 @@ import asyncio
 import base64
 import datetime
 import hashlib
+import hmac
 import re
+import secrets
+import sqlite3
 import shutil
 import subprocess
 import tempfile
@@ -1078,6 +1081,297 @@ def create_mp3(srt_text, progress_callback=None):
         return output.read_bytes()
 
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PRIVATE CUSTOMER LOGIN + HIDDEN ADMIN LICENSE MANAGEMENT
+# Customer page: normal app URL
+# Admin page: add ?admin=1 to the app URL (not shown in the public menu)
+# ─────────────────────────────────────────────────────────────────────────────
+LICENSE_DB_PATH = Path(__file__).with_name("licenses.db")
+
+
+def get_admin_password():
+    """Read the private admin password from Streamlit Secrets."""
+    try:
+        value = str(st.secrets.get("ADMIN_PASSWORD", "")).strip()
+    except Exception:
+        value = ""
+    # This fallback lets the file run immediately. Change it in Streamlit
+    # Secrets before sharing the public link.
+    return value or "CHANGE-ME-2026"
+
+
+def license_connection():
+    connection = sqlite3.connect(str(LICENSE_DB_PATH), timeout=20)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def initialize_license_database():
+    with license_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS licenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_name TEXT NOT NULL,
+                access_code TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_login_at TEXT,
+                login_count INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        connection.commit()
+
+
+def normalize_customer_name(value):
+    return " ".join(str(value or "").strip().split())[:80]
+
+
+def normalize_access_code(value):
+    return re.sub(r"[^A-Z0-9-]", "", str(value or "").strip().upper())[:40]
+
+
+def create_access_code(duration_days):
+    prefix = "7D" if duration_days == 7 else "30D" if duration_days == 30 else "1Y"
+    while True:
+        code = f"KHBR-{prefix}-{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
+        with license_connection() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM licenses WHERE access_code = ?", (code,)
+            ).fetchone()
+        if not exists:
+            return code
+
+
+def add_license(customer_name, duration_days):
+    name = normalize_customer_name(customer_name)
+    if not name:
+        raise ValueError("សូមបញ្ចូលឈ្មោះអតិថិជន។")
+    now = datetime.datetime.now()
+    expires = now + datetime.timedelta(days=int(duration_days))
+    code = create_access_code(int(duration_days))
+    with license_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO licenses
+            (customer_name, access_code, created_at, expires_at, is_active)
+            VALUES (?, ?, ?, ?, 1)
+            """,
+            (name, code, now.isoformat(timespec="seconds"), expires.isoformat(timespec="seconds")),
+        )
+        connection.commit()
+    return code, expires
+
+
+def validate_customer_login(customer_name, access_code):
+    name = normalize_customer_name(customer_name)
+    code = normalize_access_code(access_code)
+    if not name or not code:
+        return False, "សូមបញ្ចូលឈ្មោះ និងលេខកូដ។", None
+    with license_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM licenses WHERE access_code = ?", (code,)
+        ).fetchone()
+        if row is None:
+            return False, "លេខកូដមិនត្រឹមត្រូវ។", None
+        if normalize_customer_name(row["customer_name"]).casefold() != name.casefold():
+            return False, "ឈ្មោះមិនត្រូវនឹងលេខកូដនេះ។", None
+        if not bool(row["is_active"]):
+            return False, "លេខកូដនេះត្រូវបាន Admin បិទ។", None
+        expires_at = datetime.datetime.fromisoformat(row["expires_at"])
+        if datetime.datetime.now() >= expires_at:
+            return False, "លេខកូដរបស់អ្នកបានផុតកំណត់។ សូមទាក់ទង Admin។", None
+        connection.execute(
+            """
+            UPDATE licenses
+            SET last_login_at = ?, login_count = login_count + 1
+            WHERE id = ?
+            """,
+            (datetime.datetime.now().isoformat(timespec="seconds"), row["id"]),
+        )
+        connection.commit()
+    return True, "", dict(row)
+
+
+def license_rows():
+    with license_connection() as connection:
+        return connection.execute(
+            "SELECT * FROM licenses ORDER BY id DESC"
+        ).fetchall()
+
+
+def update_license_status(license_id, active):
+    with license_connection() as connection:
+        connection.execute(
+            "UPDATE licenses SET is_active = ? WHERE id = ?",
+            (1 if active else 0, int(license_id)),
+        )
+        connection.commit()
+
+
+def renew_license(license_id, extra_days):
+    with license_connection() as connection:
+        row = connection.execute(
+            "SELECT expires_at FROM licenses WHERE id = ?", (int(license_id),)
+        ).fetchone()
+        if row is None:
+            return
+        old_expiry = datetime.datetime.fromisoformat(row["expires_at"])
+        base = max(old_expiry, datetime.datetime.now())
+        new_expiry = base + datetime.timedelta(days=int(extra_days))
+        connection.execute(
+            "UPDATE licenses SET expires_at = ?, is_active = 1 WHERE id = ?",
+            (new_expiry.isoformat(timespec="seconds"), int(license_id)),
+        )
+        connection.commit()
+
+
+def delete_license(license_id):
+    with license_connection() as connection:
+        connection.execute("DELETE FROM licenses WHERE id = ?", (int(license_id),))
+        connection.commit()
+
+
+def public_login_screen():
+    st.markdown(
+        '<div class="hero"><h1>AI KHEMRA BRO</h1><p>PRIVATE CUSTOMER ACCESS</p></div>',
+        unsafe_allow_html=True,
+    )
+    left, center, right = st.columns([1, 1.25, 1])
+    with center:
+        st.markdown("### 🔐 ចូលប្រើកម្មវិធី")
+        with st.form("customer_login_form", clear_on_submit=False):
+            name = st.text_input("ទី 1៖ ឈ្មោះអ្នកប្រើ", placeholder="បញ្ចូលឈ្មោះដែល Admin បានចុះឈ្មោះ")
+            code = st.text_input("ទី 2៖ លេខកូដ", placeholder="KHBR-...", type="password")
+            submitted = st.form_submit_button("ចូលប្រើកម្មវិធី", use_container_width=True)
+        if submitted:
+            ok, message, row = validate_customer_login(name, code)
+            if ok:
+                st.session_state.customer_authenticated = True
+                st.session_state.customer_name = row["customer_name"]
+                st.session_state.customer_code = row["access_code"]
+                st.session_state.customer_expires_at = row["expires_at"]
+                st.rerun()
+            else:
+                st.error(message)
+        st.caption("សូមទាក់ទង Admin ដើម្បីទទួលលេខកូដ ឬបន្តថ្ងៃផុតកំណត់។")
+
+
+def admin_dashboard():
+    st.markdown(
+        '<div class="hero"><h1>AI KHEMRA BRO</h1><p>PRIVATE ADMIN MANAGEMENT</p></div>',
+        unsafe_allow_html=True,
+    )
+    if not st.session_state.get("admin_authenticated", False):
+        left, center, right = st.columns([1, 1.25, 1])
+        with center:
+            st.markdown("### 👑 Admin Login")
+            with st.form("admin_login_form"):
+                password = st.text_input("Admin Password", type="password")
+                submitted = st.form_submit_button("ចូល Admin", use_container_width=True)
+            if submitted:
+                if hmac.compare_digest(password, get_admin_password()):
+                    st.session_state.admin_authenticated = True
+                    st.rerun()
+                else:
+                    st.error("Admin Password មិនត្រឹមត្រូវ។")
+            if get_admin_password() == "CHANGE-ME-2026":
+                st.warning("⚠️ Password បណ្ដោះអាសន្នគឺ CHANGE-ME-2026។ សូមប្ដូរ ADMIN_PASSWORD ក្នុង Streamlit Secrets មុនចែក Link។")
+        return
+
+    top1, top2 = st.columns([4, 1])
+    with top1:
+        st.success("👑 Admin បានចូលរួច")
+    with top2:
+        if st.button("ចាកចេញ", key="admin_logout", use_container_width=True):
+            st.session_state.admin_authenticated = False
+            st.rerun()
+
+    st.markdown("## ➕ បង្កើតលេខកូដថ្មី")
+    with st.form("create_license_form", clear_on_submit=True):
+        customer_name = st.text_input("ឈ្មោះអតិថិជន")
+        duration_label = st.selectbox("រយៈពេល", ["7 ថ្ងៃ", "1 ខែ (30 ថ្ងៃ)", "1 ឆ្នាំ (365 ថ្ងៃ)"])
+        create_clicked = st.form_submit_button("🔑 បង្កើតលេខកូដ Auto", use_container_width=True)
+    if create_clicked:
+        days = {"7 ថ្ងៃ": 7, "1 ខែ (30 ថ្ងៃ)": 30, "1 ឆ្នាំ (365 ថ្ងៃ)": 365}[duration_label]
+        try:
+            code, expires = add_license(customer_name, days)
+            st.session_state.new_license_code = code
+            st.session_state.new_license_expiry = expires.strftime("%Y-%m-%d %H:%M")
+        except Exception as exc:
+            st.error(str(exc))
+    if st.session_state.get("new_license_code"):
+        st.success(
+            f"លេខកូដ៖ {st.session_state.new_license_code}\n\nផុតកំណត់៖ {st.session_state.new_license_expiry}"
+        )
+        st.code(st.session_state.new_license_code, language=None)
+
+    st.markdown("## 👥 គ្រប់គ្រងអតិថិជន")
+    rows = license_rows()
+    if not rows:
+        st.info("មិនទាន់មានលេខកូដអតិថិជន។")
+    now = datetime.datetime.now()
+    for row in rows:
+        expiry = datetime.datetime.fromisoformat(row["expires_at"])
+        expired = now >= expiry
+        status = "ផុតកំណត់" if expired else "កំពុងប្រើ" if row["is_active"] else "បានបិទ"
+        with st.expander(f"{row['customer_name']} • {row['access_code']} • {status}"):
+            st.write(f"**ថ្ងៃផុតកំណត់:** {expiry.strftime('%Y-%m-%d %H:%M')}")
+            st.write(f"**ចំនួន Login:** {row['login_count']}")
+            action1, action2, action3, action4 = st.columns(4)
+            with action1:
+                if st.button("+7 ថ្ងៃ", key=f"renew7_{row['id']}", use_container_width=True):
+                    renew_license(row["id"], 7); st.rerun()
+            with action2:
+                if st.button("+30 ថ្ងៃ", key=f"renew30_{row['id']}", use_container_width=True):
+                    renew_license(row["id"], 30); st.rerun()
+            with action3:
+                label = "បិទ" if row["is_active"] else "បើក"
+                if st.button(label, key=f"toggle_{row['id']}", use_container_width=True):
+                    update_license_status(row["id"], not bool(row["is_active"])); st.rerun()
+            with action4:
+                if st.button("លុប", key=f"delete_{row['id']}", use_container_width=True):
+                    delete_license(row["id"]); st.rerun()
+
+
+initialize_license_database()
+
+# Admin is deliberately hidden from the public menu. Open the normal app URL
+# with ?admin=1 only on the owner's device.
+admin_mode = str(st.query_params.get("admin", "0")) == "1"
+if admin_mode:
+    admin_dashboard()
+    st.stop()
+
+if not st.session_state.get("customer_authenticated", False):
+    public_login_screen()
+    st.stop()
+
+# Re-check expiry on every rerun, so an expired/blocked code loses access
+# immediately even if the customer keeps the page open.
+login_ok, login_message, login_row = validate_customer_login(
+    st.session_state.get("customer_name", ""),
+    st.session_state.get("customer_code", ""),
+)
+if not login_ok:
+    for key in ("customer_authenticated", "customer_name", "customer_code", "customer_expires_at"):
+        st.session_state.pop(key, None)
+    st.error(login_message)
+    st.rerun()
+
+customer_bar_left, customer_bar_right = st.columns([4, 1])
+with customer_bar_left:
+    expiry_display = datetime.datetime.fromisoformat(login_row["expires_at"]).strftime("%Y-%m-%d")
+    st.caption(f"👤 {login_row['customer_name']} • សុពលភាពដល់ {expiry_display}")
+with customer_bar_right:
+    if st.button("ចាកចេញ", key="customer_logout", use_container_width=True):
+        for key in ("customer_authenticated", "customer_name", "customer_code", "customer_expires_at"):
+            st.session_state.pop(key, None)
+        st.rerun()
 
 # Read this browser's saved key once per Streamlit session.
 if "api_keys_manager" not in st.session_state:
