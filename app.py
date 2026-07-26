@@ -21,6 +21,8 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
+APP_VERSION = "2.0"
+
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
 st.markdown('''
@@ -677,15 +679,43 @@ def normalize_dialogue(text):
     return text
 
 
+def gemini_generate_with_retry(client, model_name, contents, attempts=4):
+    """Call Gemini with bounded retry for temporary network/rate-limit failures."""
+    last_error = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return client.models.generate_content(model=model_name, contents=contents)
+        except Exception as exc:
+            last_error = exc
+            message = str(exc).upper()
+            retryable = any(token in message for token in (
+                "429", "RESOURCE_EXHAUSTED", "RATE LIMIT", "503", "UNAVAILABLE",
+                "TIMEOUT", "DEADLINE_EXCEEDED", "INTERNAL"
+            ))
+            if not retryable or attempt >= attempts - 1:
+                raise
+            time.sleep(min(8.0, 1.2 * (2 ** attempt)))
+    raise last_error
+
+
+def translation_needs_repair(cue, item):
+    """Reject missing, Chinese, or clearly overlong dubbing lines."""
+    if not item:
+        return True
+    dialogue = normalize_dialogue(item.get("text"))
+    if not dialogue or contains_cjk(dialogue):
+        return True
+    # A tiny tolerance avoids needless API calls for Khmer tokenization quirks.
+    return khmer_word_count(dialogue) > cue_word_limit(cue["start"], cue["end"]) + 2
+
+
 def repair_translation_items(client, model_name, uploaded_video, cues, items):
     """Retry only missing or still-Chinese cues until every cue is usable Khmer."""
     by_id = {cue["id"]: cue for cue in cues}
     for _attempt in range(3):
         bad_ids = [
             cue["id"] for cue in cues
-            if cue["id"] not in items
-            or not normalize_dialogue(items[cue["id"]].get("text"))
-            or contains_cjk(items[cue["id"]].get("text"))
+            if translation_needs_repair(cue, items.get(cue["id"]))
         ]
         if not bad_ids:
             return items
@@ -697,7 +727,7 @@ def repair_translation_items(client, model_name, uploaded_video, cues, items):
             )
             prompt = TRANSLATE_PROMPT + "\nIMPORTANT: These cues failed before. Translate EVERY cue fully into Khmer. Never copy Chinese characters.\n\nCUES:\n" + payload
             contents = [uploaded_video, prompt] if uploaded_video is not None else [prompt]
-            response = client.models.generate_content(model=model_name, contents=contents)
+            response = gemini_generate_with_retry(client, model_name, contents)
             for row in parse_json_array(response.text or ""):
                 try:
                     cue_id = int(row.get("id"))
@@ -711,7 +741,10 @@ def repair_translation_items(client, model_name, uploaded_video, cues, items):
                 dialogue = normalize_dialogue(row.get("text"))
                 if dialogue and not contains_cjk(dialogue):
                     items[cue_id] = {"tag": tag, "text": dialogue}
-    bad_ids = [cue["id"] for cue in cues if cue["id"] not in items or not items[cue["id"]].get("text") or contains_cjk(items[cue["id"]].get("text"))]
+    bad_ids = [
+        cue["id"] for cue in cues
+        if translation_needs_repair(cue, items.get(cue["id"]))
+    ]
     if bad_ids:
         raise RuntimeError(f"AI បកប្រែមិនទាន់អស់។ បន្ទាត់មានបញ្ហា៖ {bad_ids[:20]}")
     return items
@@ -731,9 +764,9 @@ def refine_translated_cues(client, model_name, uploaded_video, cues, translated)
                 f'{seconds_to_srt(cue["end"])} | MAX_WORDS={cue_word_limit(cue["start"], cue["end"])} '
                 f'| CURRENT_TAG={item["tag"]} | SOURCE={cue["source"]} | KHMER={item["text"]}'
             )
-        response = client.models.generate_content(
-            model=model_name,
-            contents=[uploaded_video, ANALYZE_PROMPT + "\n\nCUES:\n" + "\n".join(lines)],
+        response = gemini_generate_with_retry(
+            client, model_name,
+            [uploaded_video, ANALYZE_PROMPT + "\n\nCUES:\n" + "\n".join(lines)],
         )
         for item in parse_json_array(response.text or ""):
             try:
@@ -753,19 +786,45 @@ def refine_translated_cues(client, model_name, uploaded_video, cues, translated)
 
 
 def translate_cues(client, model_name, uploaded_video, cues):
+    """Translate in sequential batches while carrying recent character context."""
     result_by_id = {}
-    batch_size = 30
+    batch_size = 24
+    context_size = 6
+
     for offset in range(0, len(cues), batch_size):
         batch = cues[offset:offset + batch_size]
+
+        previous_context = []
+        for previous in cues[max(0, offset - context_size):offset]:
+            translated = result_by_id.get(previous["id"])
+            if translated:
+                previous_context.append(
+                    f'ID={previous["id"]} | TAG={translated["tag"]} '
+                    f'| SOURCE={previous["source"]} | KHMER={translated["text"]}'
+                )
+
         cue_lines = "\n".join(
             f"ID={cue['id']} | {seconds_to_srt(cue['start'])} --> "
             f"{seconds_to_srt(cue['end'])} | MAX_WORDS={cue_word_limit(cue['start'], cue['end'])} "
             f"| SOURCE={cue['source']}"
             for cue in batch
         )
-        response = client.models.generate_content(
-            model=model_name,
-            contents=[uploaded_video, TRANSLATE_PROMPT + "\n\nCUES:\n" + cue_lines],
+
+        context_block = ""
+        if previous_context:
+            context_block = (
+                "\n\nRECENT CONTINUITY CONTEXT (reference only; do not return these IDs):\n"
+                + "\n".join(previous_context)
+            )
+
+        prompt = (
+            TRANSLATE_PROMPT
+            + context_block
+            + "\n\nNEW CUES TO RETURN:\n"
+            + cue_lines
+        )
+        response = gemini_generate_with_retry(
+            client, model_name, [uploaded_video, prompt]
         )
         items = parse_json_array(response.text or "")
         for item in items:
@@ -773,10 +832,12 @@ def translate_cues(client, model_name, uploaded_video, cues):
                 cue_id = int(item.get("id"))
             except (TypeError, ValueError, AttributeError):
                 continue
+            if cue_id not in {cue["id"] for cue in batch}:
+                continue
             tag = str(item.get("tag", "M")).upper().strip()
             if tag not in VOICE_PROFILES:
                 tag = "M"
-            translated = str(item.get("text", "")).strip()
+            translated = normalize_dialogue(item.get("text", ""))
             if translated:
                 result_by_id[cue_id] = {"tag": tag, "text": translated}
 
@@ -936,7 +997,7 @@ def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
         contents = [ANALYZE_PROMPT + "\n\nCUES:\n" + payload]
         if context is not None:
             contents.insert(0, context)
-        response = client.models.generate_content(model=model_name, contents=contents)
+        response = gemini_generate_with_retry(client, model_name, contents)
         for item in parse_json_array(response.text or ""):
             try:
                 cue_id = int(item.get("id"))
@@ -2115,9 +2176,8 @@ with tab_translate:
                     payload = "\n".join(
                         f'ID={cue["id"]} | SOURCE={cue["text"]}' for cue in batch
                     )
-                    response = client.models.generate_content(
-                        model=model,
-                        contents=TRANSLATE_PROMPT + "\n\nCUES:\n" + payload,
+                    response = gemini_generate_with_retry(
+                        client, model, TRANSLATE_PROMPT + "\n\nCUES:\n" + payload
                     )
                     for item in parse_json_array(response.text or ""):
                         cue_id = int(item.get("id"))
