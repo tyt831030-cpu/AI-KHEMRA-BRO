@@ -27,3 +27,11 @@ COOKIE_SECRET = "LONG_RANDOM_SECRET"
 ## Workflow
 
 Upload Video → Translate → Edit SRT → Generate Khmer MP3 → Download
+
+
+## Latest update
+- Preserves the existing application UI and workflow.
+- Improves the translation prompt for natural, emotional spoken Khmer dubbing.
+- Removes device and single-session locking.
+- A valid access code can be reused after logout, browser close, phone restart, and on different phones.
+- Customer name is optional at login; the valid access code is the credential.
