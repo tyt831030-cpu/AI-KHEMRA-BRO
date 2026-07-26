@@ -1,45 +1,28 @@
-# AI KHEMRA BRO
+# AI KHEMRA BRO — Version 2.0
 
-This build keeps the existing application UI and workflow and fixes the security gate so the site can start immediately.
+This package upgrades the existing application without redesigning its UI.
 
-## Owner login
+## Version 2.0 improvements
 
-- Username: `KHEMRA`
-- Bootstrap password: `0719067125`
-- Open owner login by pressing the small `✦` button five times.
+- Smarter Gemini translation with recent-dialogue continuity between batches.
+- More consistent character gender, age, narrator, and inner-thought tags.
+- Automatic retry for temporary Gemini 429/503/network failures.
+- Repair pass now catches missing Chinese and clearly overlong dubbing lines.
+- Existing mobile UI, upload, SRT editor, MP3 generation, downloads, owner panel, and customer licensing are preserved.
+- Customer access codes remain reusable across phones and browsers while active and unexpired; no permanent device lock is applied.
+- Each Streamlit browser session keeps a separate temporary project workspace.
 
-For production, override the bootstrap credentials in Streamlit Community Cloud:
+## Deploy
 
-```toml
-ADMIN_USERNAME = "KHEMRA"
-ADMIN_PASSWORD = "YOUR_PRIVATE_PASSWORD"
-LICENSE_PEPPER = "LONG_RANDOM_SECRET"
-COOKIE_SECRET = "LONG_RANDOM_SECRET"
-```
-
-## Files
+Upload these four files to the root of the existing GitHub repository, replacing the old files:
 
 - `app.py`
 - `requirements.txt`
 - `packages.txt`
 - `README.md`
 
-## Workflow
+Keep API keys and passwords only in Streamlit Secrets. Do not commit them to GitHub.
 
-Upload Video → Translate → Edit SRT → Generate Khmer MP3 → Download
+## Required Streamlit Secrets
 
-
-## Latest update
-- Preserves the existing application UI and workflow.
-- Improves the translation prompt for natural, emotional spoken Khmer dubbing.
-- Removes device and single-session locking.
-- A valid access code can be reused after logout, browser close, phone restart, and on different phones.
-- Customer name is optional at login; the valid access code is the credential.
-
-
-## Session isolation update
-- Separate private workspace per browser session.
-- Upload/SRT/MP3/Clear Project do not affect other users.
-- Access codes remain reusable on all phones and browsers.
-- Fixed MP3 filename StreamlitAPIException.
-- SQLite WAL enabled for safer concurrent access.
+Keep the same secrets already used by your deployment. At minimum, configure the Gemini/API and owner/security values expected by `app.py`.
