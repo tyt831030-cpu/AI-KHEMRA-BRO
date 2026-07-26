@@ -1908,7 +1908,13 @@ def public_login_screen():
                 st.rerun()
             else:
                 st.error(message)
-        st.caption("សូមទាក់ទង Owner ដើម្បីទទួល Access Code។ លេខកូដមានសុពលភាពអាចចូលម្ដងហើយម្ដងទៀត និងប្រើលើទូរសព្ទផ្សេងៗបាន។")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.link_button("📘 Facebook",'https://www.facebook.com/Khrmra?mibextid=wwXIfr&mibextid=wwXIfr',use_container_width=True)
+        with c2:
+            st.link_button("✈️ Telegram",'https://t.me/+VC_6B66uwH5hMDE9',use_container_width=True)
+
+        st.caption("សូមទាក់ទង Owner ដើម្បីទទួល Access Code")
 
 
 def _copy_card(name, code, expires_text):
