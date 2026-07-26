@@ -1,37 +1,29 @@
-# AI KHEMRA BRO v4.4 Stable Multi-User
+# AI KHEMRA BRO v5.0 Production Stable
 
-## What was fixed
-- Fixed missing `json` import used by saved-login cookies.
-- Removed the database-wide session reset that ran on every Streamlit rerun.
-- Added a persistent `DATA_DIR` option for Railway/Render mounted volumes.
-- Added safer SQLite WAL settings and cross-thread access support.
-- Added a clear database startup error instead of a blank iPhone screen.
-- Added iPhone/Safari viewport and overscroll safeguards.
-- Access Codes are not tied to one phone. A valid active code can be used on another phone.
-- API keys remain encrypted and attached to the Access Code in the account database.
+## Fixed in this build
+- Navigation no longer returns to the first/home function on every Streamlit rerun.
+- Saved customer login and encrypted Gemini API keys remain attached to the Access Code.
+- Access Codes are not locked to one phone or browser.
+- Removed the database-wide session reset that previously ran on every page refresh.
+- The full interface stays visible when no Gemini API key is saved.
+- Added persistent `DATA_DIR` support for Railway/Render volumes.
+- Whisper defaults to the `small` model and uses tighter VAD settings to retain short Chinese speech.
+- Existing SRT timestamps are kept as the source of truth for translation and dubbing.
 
-## Deploy files
-Upload these files to the same repository root:
-- `app.py`
-- `requirements.txt`
-- `packages.txt`
+## Required deployment settings
+Set these secrets/environment variables:
 
-## Recommended secrets
-```toml
-COOKIE_SECRET = "use-a-long-random-secret"
-LICENSE_PEPPER = "use-another-long-random-secret"
-ADMIN_USERNAME = "KHEMRA"
-ADMIN_PASSWORD = "change-this-password"
-```
+- `COOKIE_SECRET`: long random secret
+- `API_ENCRYPTION_KEY`: long random secret
+- `LICENSE_PEPPER`: long random secret
+- `ADMIN_PASSWORD`: owner password
+- `DATA_DIR=/data` when a persistent volume is mounted at `/data`
 
-## Persistent database
-For Railway/Render, mount a persistent volume and set:
+Optional performance settings:
 
-```bash
-DATA_DIR=/data
-```
+- `WHISPER_MODEL=small`
+- `WHISPER_COMPUTE_TYPE=int8`
+- `WHISPER_CPU_THREADS=4`
 
-Without a persistent volume, a local SQLite database can disappear after a redeploy.
-
-## Capacity note
-This release is a stable multi-user baseline, but 1,000 simultaneous video jobs cannot be guaranteed by one Streamlit instance. Whisper, FFmpeg and TTS run on the server, not on each user's phone. For heavy concurrency, use multiple workers, a queue, object storage, and PostgreSQL/Supabase.
+## Important production note
+This package is stable for one persistent server instance. Supporting 1,000 simultaneous video-processing jobs requires external PostgreSQL/Supabase, object storage, a job queue, and multiple workers. A phone only controls the app; Whisper, translation, FFmpeg, and TTS run on the server.
