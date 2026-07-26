@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "3.1"
+APP_VERSION = "3.2"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -2044,6 +2044,101 @@ def hidden_owner_trigger():
             st.rerun()
 
 
+
+def render_private_subscription_countdown(expiry_datetime, plan_label):
+    """
+    Render a private live countdown for the currently authenticated customer.
+    The browser only receives this customer's expiry timestamp.
+    """
+    import streamlit.components.v1 as components
+
+    expiry_iso = expiry_datetime.astimezone(datetime.timezone.utc).isoformat()
+    safe_plan = re.sub(r"[^0-9A-Za-z\u1780-\u17FF \-]", "", str(plan_label or "កញ្ចប់សមាជិក"))
+
+    components.html(
+        f"""
+        <div class="khbr-countdown-card">
+          <div class="khbr-plan">⌛️ {safe_plan}</div>
+          <div id="khbr-countdown" class="khbr-time">កំពុងគណនា…</div>
+          <div id="khbr-expiry" class="khbr-expiry"></div>
+        </div>
+        <style>
+          html,body{{margin:0;padding:0;background:transparent;font-family:Arial,"Noto Sans Khmer",sans-serif}}
+          .khbr-countdown-card{{
+            min-height:112px;
+            box-sizing:border-box;
+            border-radius:16px;
+            padding:18px 16px;
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            text-align:center;
+            color:#fff;
+            border:1px solid rgba(255,255,255,.18);
+            background:linear-gradient(90deg,#078bc9 0%,#25c9df 100%);
+            box-shadow:0 9px 24px rgba(3,169,216,.23);
+          }}
+          .khbr-plan{{font-size:18px;font-weight:900;margin-bottom:9px}}
+          .khbr-time{{font-size:20px;font-weight:950;line-height:1.45}}
+          .khbr-expiry{{font-size:13px;font-weight:700;opacity:.92;margin-top:7px}}
+        </style>
+        <script>
+          const end = new Date({expiry_iso!r});
+          const timeNode = document.getElementById("khbr-countdown");
+          const expiryNode = document.getElementById("khbr-expiry");
+
+          function two(n) {{ return String(n).padStart(2, "0"); }}
+
+          function updateCountdown() {{
+            const now = new Date();
+            let ms = end.getTime() - now.getTime();
+
+            expiryNode.textContent =
+              "ផុតកំណត់៖ " +
+              two(end.getDate()) + "/" +
+              two(end.getMonth()+1) + "/" +
+              end.getFullYear() + " " +
+              two(end.getHours()) + ":" +
+              two(end.getMinutes());
+
+            if (ms <= 0) {{
+              timeNode.textContent = "❌ កញ្ចប់បានផុតកំណត់";
+              return;
+            }}
+
+            const minute = 60 * 1000;
+            const hour = 60 * minute;
+            const day = 24 * hour;
+            const week = 7 * day;
+            const month = 30 * day;
+
+            const months = Math.floor(ms / month); ms %= month;
+            const weeks = Math.floor(ms / week); ms %= week;
+            const days = Math.floor(ms / day); ms %= day;
+            const hours = Math.floor(ms / hour); ms %= hour;
+            const minutes = Math.floor(ms / minute); ms %= minute;
+            const seconds = Math.floor(ms / 1000);
+
+            const parts = [];
+            if (months) parts.push(months + " ខែ");
+            if (weeks) parts.push(weeks + " សប្តាហ៍");
+            if (days) parts.push(days + " ថ្ងៃ");
+            parts.push(two(hours) + " ម៉ោង");
+            parts.push(two(minutes) + " នាទី");
+            parts.push(two(seconds) + " វិនាទី");
+
+            timeNode.textContent = "នៅសល់៖ " + parts.join(" • ");
+          }}
+
+          updateCountdown();
+          setInterval(updateCountdown, 1000);
+        </script>
+        """,
+        height=126,
+        scrolling=False,
+    )
+
 def public_login_screen():
     st.markdown(
         '<div class="hero"><h1>AI KHEMRA BRO</h1><p>PRIVATE CUSTOMER ACCESS</p></div>',
@@ -2228,15 +2323,30 @@ def admin_dashboard():
                         renew_license(row["id"], renew_days, plan_name)
                         st.rerun()
 
-            action_left, action_right = st.columns(2)
+            action_left, action_middle, action_right = st.columns(3)
             with action_left:
                 label = "បិទ" if row["is_active"] else "បើក"
                 if st.button(label, key=f"toggle_{row['id']}", use_container_width=True):
                     update_license_status(row["id"], not bool(row["is_active"]))
                     st.rerun()
-            with action_right:
+            with action_middle:
                 if st.button("ផ្តាច់ Session", key=f"disconnect_{row['id']}", use_container_width=True):
                     disconnect_license(row["id"])
+                    st.rerun()
+            with action_right:
+                if st.button("🗑️ លុប API Key", key=f"owner_delete_api_{row['id']}", use_container_width=True):
+                    with license_connection() as connection:
+                        connection.execute(
+                            "UPDATE licenses SET saved_api_keys_encrypted='' WHERE id=?",
+                            (int(row["id"]),),
+                        )
+                        connection.commit()
+                    _audit(
+                        "owner_deleted_customer_api_key",
+                        get_admin_username(),
+                        f"{row['customer_name']}|{row['access_code_display']}",
+                    )
+                    st.success("Owner បានលុប API Key របស់ Customer នេះរួច។")
                     st.rerun()
 
             with st.expander("⚠️ Advanced Delete"):
@@ -2338,15 +2448,15 @@ with st.container(key="api_menu_container"):
         private_active = bool(login_row["is_active"]) and private_now < _parse_iso(login_row["expires_at"])
 
         st.markdown("#### 📅 កញ្ចប់របស់អ្នក")
-        st.write(f"**កញ្ចប់៖** {private_plan}")
-        st.write(f"**ផុតកំណត់៖** {private_expiry.strftime('%d/%m/%Y %I:%M %p')}")
-        if private_active:
-            st.success("✅ កំពុងដំណើរការ")
-        else:
+        render_private_subscription_countdown(private_expiry, private_plan)
+        if not private_active:
             st.error("❌ កញ្ចប់បានផុតកំណត់។ សូមទាក់ទង Owner ដើម្បីបន្តសិទ្ធិ។")
 
         st.divider()
-        st.caption("API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នកក្នុង Database។ បិទទូរសព្ទ បិទ Safari ឬ Update/Restart កម្មវិធីក៏មិនបាត់ទេ។ វាបាត់តែពេលចុច «លុបសោ»។")
+        st.caption(
+            "API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នក។ "
+            "អ្នកប្រើមិនអាចលុបសោបានទេ។ មានតែ Owner ប៉ុណ្ណោះដែលអាចលុប។"
+        )
 
         st.text_area(
             "Gemini API Key",
@@ -2356,25 +2466,20 @@ with st.container(key="api_menu_container"):
             help="អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ។ បើសោមួយ quota ពេញ App នឹងសាកសោបន្ទាប់។",
         )
 
-        save_col, logout_col = st.columns(2)
-        with save_col:
-            if st.button("💾 រក្សាទុក", key="save_api_keys", use_container_width=True):
-                entered_keys = [
-                    line.strip()
-                    for line in st.session_state.api_keys_manager.splitlines()
-                    if line.strip()
-                ]
-                if entered_keys:
-                    save_private_api_keys(st.session_state.api_keys_manager)
-                    st.session_state.api_saved_notice = True
-                    st.rerun()
-                else:
-                    st.warning("សូមបញ្ចូល API Key ជាមុន។")
-
-        with logout_col:
-            if st.button("🗑️ លុបសោ", key="remove_api_keys", use_container_width=True):
-                clear_private_user_session(delete_saved_api=True)
+        if st.button("💾 រក្សាទុក API Key", key="save_api_keys", use_container_width=True):
+            entered_keys = [
+                line.strip()
+                for line in st.session_state.api_keys_manager.splitlines()
+                if line.strip()
+            ]
+            if entered_keys:
+                save_private_api_keys(st.session_state.api_keys_manager)
+                st.session_state.api_saved_notice = True
                 st.rerun()
+            else:
+                st.warning("សូមបញ្ចូល API Key ជាមុន។")
+
+        st.caption("🔒 បន្ទាប់ពីរក្សាទុក អ្នកប្រើមិនមានប៊ូតុងលុបសោទេ។ ការលុបត្រូវធ្វើដោយ Owner។")
 
         current_keys = [
             line.strip()
@@ -2408,6 +2513,13 @@ translation_style = st.session_state.translation_style
 model = st.session_state.model_selector
 lite_mode = st.session_state.lite_mode
 max_mb = 60 if lite_mode else 150
+
+if not valid_api_keys:
+    st.error(
+        "🔐 កម្មវិធីមិនអាចដំណើរការបានទេ ព្រោះមិនទាន់មាន Gemini API Key។ "
+        "សូមចុចប៊ូតុង ☰ បញ្ចូល API Key ហើយចុច «រក្សាទុក API Key»។"
+    )
+    st.stop()
 
 st.markdown(
     '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
