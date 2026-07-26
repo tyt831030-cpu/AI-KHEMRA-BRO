@@ -1138,8 +1138,9 @@ def get_admin_username():
 
 
 def get_admin_password():
-    # Password must be stored in Streamlit Secrets; never hard-code it in GitHub.
-    return _secret("ADMIN_PASSWORD", "")
+    # Works immediately even before Streamlit Secrets are configured.
+    # For production, set ADMIN_PASSWORD in Streamlit Secrets to override this bootstrap value.
+    return _secret("ADMIN_PASSWORD", "0719067125")
 
 
 def license_connection():
@@ -1542,13 +1543,6 @@ def _copy_card(name, code, expires_text):
 def admin_dashboard():
     st.markdown('<div class="hero"><h1>AI KHEMRA BRO</h1><p>PRIVATE OWNER MANAGEMENT</p></div>', unsafe_allow_html=True)
     admin_password = get_admin_password()
-    if not admin_password:
-        st.error('មិនទាន់កំណត់ ADMIN_PASSWORD នៅ Streamlit Secrets។')
-        st.code('ADMIN_USERNAME = "KHEMRA"\nADMIN_PASSWORD = "YOUR_PRIVATE_PASSWORD"\nLICENSE_PEPPER = "LONG_RANDOM_SECRET"\nCOOKIE_SECRET = "LONG_RANDOM_SECRET"', language='toml')
-        if st.button("← ត្រឡប់", key="close_admin_missing_secret", use_container_width=True):
-            st.session_state.admin_gate_visible = False
-            st.rerun()
-        return
 
     if not st.session_state.get("admin_authenticated", False):
         left, center, right = st.columns([1, 1.25, 1])
