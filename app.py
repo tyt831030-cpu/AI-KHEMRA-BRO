@@ -3,8 +3,6 @@ import base64
 import datetime
 import hashlib
 import hmac
-import json
-import os
 import re
 import secrets
 import sqlite3
@@ -23,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "5.1"
+APP_VERSION = "3.2"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -728,22 +726,8 @@ def _reset_project_workspace():
 
 @st.cache_resource(show_spinner=False)
 def load_whisper_model():
-    """Load one shared ASR model per server process.
-
-    WHISPER_MODEL may be set to base/small/medium.  "small" is the production
-    default because it captures short Chinese words more reliably than base
-    while remaining practical on a CPU server.
-    """
-    model_name = os.getenv("WHISPER_MODEL", "small").strip() or "small"
-    compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8").strip() or "int8"
-    cpu_threads = max(1, int(os.getenv("WHISPER_CPU_THREADS", "4")))
-    return WhisperModel(
-        model_name,
-        device="cpu",
-        compute_type=compute_type,
-        cpu_threads=cpu_threads,
-        num_workers=1,
-    )
+    # Base + int8 is selected so it can run on Streamlit Community Cloud CPU.
+    return WhisperModel("base", device="cpu", compute_type="int8")
 
 for key,value in {
     'srt_text':'',
@@ -907,13 +891,13 @@ def transcribe_with_whisper(wav_path):
         best_of=5,
         vad_filter=True,
         vad_parameters={
-            "min_silence_duration_ms": 160,
-            "min_speech_duration_ms": 25,
-            "speech_pad_ms": 420,
+            "min_silence_duration_ms": 220,
+            "min_speech_duration_ms": 45,
+            "speech_pad_ms": 380,
         },
         condition_on_previous_text=True,
         word_timestamps=True,
-        no_speech_threshold=0.72,
+        no_speech_threshold=0.65,
         log_prob_threshold=-1.5,
         compression_ratio_threshold=2.6,
     )
@@ -1190,32 +1174,6 @@ def friendly_ai_error(exc, key_count=1):
     return f"AI មិនអាចបញ្ចប់ការបកប្រែបាន៖ {message[:420]}"
 
 
-def gemini_text_with_key_rotation(api_keys, model_name, contents, attempts_per_key=2):
-    """Use the next saved key immediately when one key returns 429/invalid-key.
-
-    This cannot create free quota, but it prevents one exhausted key from
-    stopping the whole app when the customer saved additional keys.
-    """
-    if isinstance(api_keys, str):
-        api_keys = [api_keys]
-    keys = [str(key).strip() for key in api_keys if str(key).strip()]
-    if not keys:
-        raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
-    last_error = None
-    for key in keys:
-        try:
-            client = genai.Client(api_key=key)
-            return gemini_generate_with_retry(
-                client, model_name, contents, attempts=max(1, attempts_per_key)
-            )
-        except Exception as exc:
-            last_error = exc
-            if is_quota_error(exc) or is_invalid_key_error(exc):
-                continue
-            raise RuntimeError(friendly_ai_error(exc, len(keys))) from exc
-    raise RuntimeError(friendly_ai_error(last_error, len(keys)))
-
-
 def video_to_srt(video_path, api_keys, model):
     """
     Whisper creates timestamps once.
@@ -1297,61 +1255,46 @@ def ms_to_srt(value):
     return seconds_to_srt(value / 1000.0)
 
 
-def analyze_inner_thoughts(srt_text, api_keys, model_name, video_path=None):
+def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
     cues = srt_to_structured_cues(srt_text)
     if not cues:
         raise ValueError("រកមិនឃើញ SRT ត្រឹមត្រូវទេ។")
-    if isinstance(api_keys, str):
-        api_keys = [api_keys]
-    keys = [str(key).strip() for key in api_keys if str(key).strip()]
-    if not keys:
-        raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
-
-    last_error = None
-    for key in keys:
-        try:
-            client = genai.Client(api_key=key)
-            context = upload_for_context(client, video_path) if video_path else None
-            updated = {}
-            batch_size = 35
-            for offset in range(0, len(cues), batch_size):
-                batch = cues[offset:offset + batch_size]
-                payload = "\n".join(
-                    f'ID={cue["id"]} | TIME={ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])} '
-                    f'| MAX_WORDS={cue_word_limit(cue["start_ms"] / 1000.0, cue["end_ms"] / 1000.0)} '
-                    f'| TAG={cue["tag"]} | TEXT={cue["text"]}'
-                    for cue in batch
-                )
-                contents = [ANALYZE_PROMPT + "\n\nCUES:\n" + payload]
-                if context is not None:
-                    contents.insert(0, context)
-                response = gemini_generate_with_retry(client, model_name, contents, attempts=2)
-                for item in parse_json_array(response.text or ""):
-                    try:
-                        cue_id = int(item.get("id"))
-                    except (TypeError, ValueError, AttributeError):
-                        continue
-                    tag = str(item.get("tag", "M")).upper().strip()
-                    if tag not in VOICE_PROFILES:
-                        tag = "M_ADULT"
-                    dialogue = str(item.get("text", "")).strip()
-                    if dialogue:
-                        updated[cue_id] = {"tag": tag, "text": dialogue}
-
-            blocks = []
-            for cue in cues:
-                item = updated.get(cue["id"], {"tag": cue["tag"], "text": cue["text"]})
-                blocks.append(
-                    f'{cue["id"]}\n{ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])}\n'
-                    f'[{item["tag"]}] {item["text"]}'
-                )
-            return "\n\n".join(blocks)
-        except Exception as exc:
-            last_error = exc
-            if is_quota_error(exc) or is_invalid_key_error(exc):
+    client = genai.Client(api_key=api_key)
+    context = upload_for_context(client, video_path) if video_path else None
+    updated = {}
+    batch_size = 35
+    for offset in range(0, len(cues), batch_size):
+        batch = cues[offset:offset + batch_size]
+        payload = "\n".join(
+            f'ID={cue["id"]} | TIME={ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])} '
+            f'| MAX_WORDS={cue_word_limit(cue["start_ms"] / 1000.0, cue["end_ms"] / 1000.0)} '
+            f'| TAG={cue["tag"]} | TEXT={cue["text"]}'
+            for cue in batch
+        )
+        contents = [ANALYZE_PROMPT + "\n\nCUES:\n" + payload]
+        if context is not None:
+            contents.insert(0, context)
+        response = gemini_generate_with_retry(client, model_name, contents)
+        for item in parse_json_array(response.text or ""):
+            try:
+                cue_id = int(item.get("id"))
+            except (TypeError, ValueError, AttributeError):
                 continue
-            raise RuntimeError(friendly_ai_error(exc, len(keys))) from exc
-    raise RuntimeError(friendly_ai_error(last_error, len(keys)))
+            tag = str(item.get("tag", "M")).upper().strip()
+            if tag not in VOICE_PROFILES:
+                tag = "M_ADULT"
+            dialogue = str(item.get("text", "")).strip()
+            if dialogue:
+                updated[cue_id] = {"tag": tag, "text": dialogue}
+
+    blocks = []
+    for cue in cues:
+        item = updated.get(cue["id"], {"tag": cue["tag"], "text": cue["text"]})
+        blocks.append(
+            f'{cue["id"]}\n{ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])}\n'
+            f'[{item["tag"]}] {item["text"]}'
+        )
+    return "\n\n".join(blocks)
 
 def parse_srt(srt_text):
     time_re=re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
@@ -1627,54 +1570,7 @@ def create_mp3(srt_text, progress_callback=None):
 # PRIVATE CUSTOMER LOGIN + HIDDEN OWNER LICENSE MANAGEMENT
 # This module adds security only. The original app UI/workflow below is unchanged.
 # ─────────────────────────────────────────────────────────────────────────────
-def _resolve_data_dir():
-    """Choose one stable writable data directory and do not switch silently."""
-    configured = os.getenv("DATA_DIR", "").strip()
-    app_dir = Path(__file__).resolve().parent
-    candidates = []
-    if configured:
-        candidates.append(Path(configured))
-    # Prefer the app data folder when DATA_DIR is not configured. This avoids
-    # randomly switching between /data and ./data after a redeploy.
-    candidates.append(app_dir / "data")
-    candidates.append(Path("/data"))
-    candidates.append(app_dir)
-    for candidate in candidates:
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-            probe = candidate / ".write_test"
-            probe.write_text("ok", encoding="utf-8")
-            probe.unlink(missing_ok=True)
-            return candidate
-        except Exception:
-            continue
-    return app_dir
-
-DATA_DIR = _resolve_data_dir()
-LICENSE_DB_PATH = DATA_DIR / "licenses.db"
-
-def _migrate_legacy_license_database():
-    """Copy an older licenses.db into the active persistent location once."""
-    if LICENSE_DB_PATH.exists() and LICENSE_DB_PATH.stat().st_size > 0:
-        return
-    app_dir = Path(__file__).resolve().parent
-    candidates = [
-        app_dir / "licenses.db",
-        app_dir / "data" / "licenses.db",
-        Path("/data/licenses.db"),
-    ]
-    for legacy in candidates:
-        try:
-            if legacy.resolve() == LICENSE_DB_PATH.resolve():
-                continue
-            if legacy.exists() and legacy.stat().st_size > 0:
-                LICENSE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(legacy, LICENSE_DB_PATH)
-                return
-        except Exception:
-            continue
-
-_migrate_legacy_license_database()
+LICENSE_DB_PATH = Path(__file__).with_name("licenses.db")
 SESSION_COOKIE_NAME = "ai_khemra_bro_customer_session"
 LOGIN_COOKIE_NAME = "ai_khemra_bro_saved_login"
 SESSION_IDLE_MINUTES = 30
@@ -1795,54 +1691,6 @@ def initialize_license_database():
         )
         connection.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_key_time ON login_attempts(attempt_key, attempted_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(event_at)")
-        connection.commit()
-
-
-def ensure_owner_recovery_license():
-    """Restore the owner's confirmed one-year code if an old local DB was lost.
-
-    This is an idempotent migration for the specific code confirmed by the
-    owner in this project. It never shortens an existing expiry date.
-    """
-    recovery_code = normalize_access_code(
-        _secret("OWNER_RECOVERY_ACCESS_CODE", "KHBR-17BB-4931")
-    )
-    if not recovery_code:
-        return
-    recovery_name = normalize_customer_name(
-        _secret("OWNER_RECOVERY_CUSTOMER_NAME", "T")
-    ) or "Owner Customer"
-    now = _utcnow()
-    requested_expiry = now + datetime.timedelta(days=365)
-    with license_connection() as connection:
-        row = connection.execute(
-            "SELECT * FROM licenses WHERE access_code_hash=? OR access_code_display=?",
-            (_hash_code(recovery_code), recovery_code),
-        ).fetchone()
-        if row is None:
-            connection.execute(
-                """
-                INSERT INTO licenses
-                (customer_name, access_code_hash, access_code_display, created_at, expires_at,
-                 is_active, created_card_until, plan_label)
-                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-                """,
-                (
-                    recovery_name, _hash_code(recovery_code), recovery_code,
-                    _iso(now), _iso(requested_expiry),
-                    _iso(now + datetime.timedelta(hours=NEW_LICENSE_CARD_HOURS)),
-                    "1 ឆ្នាំ (Recovered)",
-                ),
-            )
-        else:
-            current_expiry = _parse_iso(row["expires_at"])
-            new_expiry = max(current_expiry, requested_expiry)
-            connection.execute(
-                """UPDATE licenses SET customer_name=?, access_code_hash=?,
-                   access_code_display=?, expires_at=?, is_active=1 WHERE id=?""",
-                (recovery_name, _hash_code(recovery_code), recovery_code,
-                 _iso(new_expiry), row["id"]),
-            )
         connection.commit()
 
 
@@ -2513,13 +2361,13 @@ def admin_dashboard():
             st.caption(f"{log['event_at']} • {log['event_type']} • {log['actor']} • {log['details']}")
 
 
-try:
-    initialize_license_database()
-    ensure_owner_recovery_license()
-except Exception as database_error:
-    st.error(f"Database មិនអាចបើកបាន៖ {database_error}")
-    st.info("កំណត់ DATA_DIR ទៅ Persistent Volume ដែលអាចសរសេរបាន រួច Restart App។")
-    st.stop()
+initialize_license_database()
+# Compatibility cleanup: remove historical device/session locks created by older versions.
+with license_connection() as _lock_cleanup_connection:
+    _lock_cleanup_connection.execute(
+        "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL"
+    )
+    _lock_cleanup_connection.commit()
 hidden_owner_trigger()
 if st.session_state.get("admin_gate_visible", False) or st.session_state.get("admin_authenticated", False):
     admin_dashboard()
@@ -2561,17 +2409,9 @@ if not login_ok:
     st.rerun()
 
 st.session_state.customer_session_token = current_token
-customer_bar_left, customer_bar_right = st.columns([4, 1])
-with customer_bar_left:
-    st.caption(f"👤 {login_row['customer_name']}")
-with customer_bar_right:
-    if st.button("ចាកចេញ", key="customer_logout", use_container_width=True):
-        release_customer_session(st.session_state.get("customer_code", ""), current_token)
-        _session_cookie_delete()
-        clear_private_user_session()
-        for key in ("customer_authenticated", "customer_name", "customer_code", "customer_session_token"):
-            st.session_state.pop(key, None)
-        st.rerun()
+# Keep only the signed-in user label on the workspace.
+# The logout control is intentionally placed inside Settings below.
+st.caption(f"👤 {login_row['customer_name']}")
 
 # Read this browser's saved key once per Streamlit session.
 if "api_keys_manager" not in st.session_state:
@@ -2583,7 +2423,6 @@ for state_key, default_value in {
     "translation_style": "🔴 Chinese Drama Pro",
     "model_selector": "gemini-2.5-flash",
     "lite_mode": True,
-    "active_page": "🎬 Video → SRT",
     "api_saved_notice": False,
 }.items():
     if state_key not in st.session_state:
@@ -2606,46 +2445,6 @@ with st.container(key="api_menu_container"):
             st.error("❌ កញ្ចប់បានផុតកំណត់។ សូមទាក់ទង Owner ដើម្បីបន្តសិទ្ធិ។")
 
         st.divider()
-        st.caption(
-            "API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នក។ "
-            "អ្នកប្រើមិនអាចលុបសោបានទេ។ មានតែ Owner ប៉ុណ្ណោះដែលអាចលុប។"
-        )
-
-        st.text_area(
-            "Gemini API Key",
-            height=120,
-            placeholder="AIza...",
-            key="api_keys_manager",
-            help="អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ។ បើសោមួយ quota ពេញ App នឹងសាកសោបន្ទាប់។",
-        )
-
-        if st.button("💾 រក្សាទុក API Key", key="save_api_keys", use_container_width=True):
-            entered_keys = [
-                line.strip()
-                for line in st.session_state.api_keys_manager.splitlines()
-                if line.strip()
-            ]
-            if entered_keys:
-                save_private_api_keys(st.session_state.api_keys_manager)
-                st.session_state.api_saved_notice = True
-                st.rerun()
-            else:
-                st.warning("សូមបញ្ចូល API Key ជាមុន។")
-
-        st.caption("🔒 បន្ទាប់ពីរក្សាទុក អ្នកប្រើមិនមានប៊ូតុងលុបសោទេ។ ការលុបត្រូវធ្វើដោយ Owner។")
-
-        current_keys = [
-            line.strip()
-            for line in st.session_state.get("api_keys_manager", "").splitlines()
-            if line.strip()
-        ]
-        if current_keys:
-            st.success(f"✅ API Key ត្រៀមប្រើ៖ {len(current_keys)} • Auto rotation")
-            st.caption("🔒 បានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នក។ បិទទូរសព្ទ ឬ Update កម្មវិធីក៏មិនបាត់ទេ។")
-        else:
-            st.info("បញ្ចូល API Key រួចចុច «រក្សាទុក»។")
-
-        st.divider()
         st.selectbox("🌍 Target Language", ["Khmer (ខ្មែរ)"], key="target_language")
         st.radio(
             "🎭 Translation Style",
@@ -2659,6 +2458,62 @@ with st.container(key="api_menu_container"):
         )
         st.toggle("📶 4G Lite Mode", key="lite_mode")
 
+        # API controls stay at the bottom of Settings and use a compact layout.
+        st.divider()
+        with st.expander("🔑 Gemini API Key", expanded=False):
+            st.caption(
+                "API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នក។ "
+                "អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ។"
+            )
+            st.text_area(
+                "Gemini API Key",
+                height=72,
+                placeholder="AIza...",
+                key="api_keys_manager",
+                label_visibility="collapsed",
+                help="បើសោមួយ quota ពេញ App នឹងសាកសោបន្ទាប់។",
+            )
+
+            save_col, status_col = st.columns([1.15, 1])
+            with save_col:
+                if st.button("💾 រក្សាទុក", key="save_api_keys", use_container_width=True):
+                    entered_keys = [
+                        line.strip()
+                        for line in st.session_state.api_keys_manager.splitlines()
+                        if line.strip()
+                    ]
+                    if entered_keys:
+                        save_private_api_keys(st.session_state.api_keys_manager)
+                        st.session_state.api_saved_notice = True
+                        st.rerun()
+                    else:
+                        st.warning("សូមបញ្ចូល API Key ជាមុន។")
+
+            current_keys = [
+                line.strip()
+                for line in st.session_state.get("api_keys_manager", "").splitlines()
+                if line.strip()
+            ]
+            with status_col:
+                if current_keys:
+                    st.success(f"✅ {len(current_keys)} Key")
+                else:
+                    st.info("មិនទាន់មាន Key")
+
+            if current_keys:
+                st.caption("🔒 បានរក្សាទុកជាមួយគណនីអ្នក។")
+
+        # Small logout button at the very bottom of Settings.
+        logout_left, logout_right = st.columns([2.2, 1])
+        with logout_right:
+            if st.button("ចាកចេញ", key="customer_logout", use_container_width=True):
+                release_customer_session(st.session_state.get("customer_code", ""), current_token)
+                _session_cookie_delete()
+                clear_private_user_session()
+                for key in ("customer_authenticated", "customer_name", "customer_code", "customer_session_token"):
+                    st.session_state.pop(key, None)
+                st.rerun()
+
 api_keys_text = st.session_state.get("api_keys_manager", "")
 valid_api_keys = [line.strip() for line in api_keys_text.splitlines() if line.strip()]
 api_key = valid_api_keys[0] if valid_api_keys else ""
@@ -2668,33 +2523,22 @@ lite_mode = st.session_state.lite_mode
 max_mb = 60 if lite_mode else 150
 
 if not valid_api_keys:
-    st.warning(
-        "🔐 មិនទាន់មាន Gemini API Key។ UI នៅតែអាចប្រើបាន ប៉ុន្តែប៊ូតុង AI "
-        "នឹងស្នើឱ្យដាក់ API Key មុនដំណើរការ។ ចុច ☰ ដើម្បីរក្សាទុកសោ។"
+    st.error(
+        "🔐 កម្មវិធីមិនអាចដំណើរការបានទេ ព្រោះមិនទាន់មាន Gemini API Key។ "
+        "សូមចុចប៊ូតុង ☰ បញ្ចូល API Key ហើយចុច «រក្សាទុក API Key»។"
     )
+    st.stop()
 
 st.markdown(
     '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
     unsafe_allow_html=True,
 )
 
-PAGE_OPTIONS = [
-    "🎬 Video → SRT",
-    "📝 AI Subtitle Translator",
-    "📜 SRT → Speech",
-    "🎙️ Text → Speech",
-]
-if "active_page" not in st.session_state or st.session_state.active_page not in PAGE_OPTIONS:
-    st.session_state.active_page = PAGE_OPTIONS[0]
-active_page = st.radio(
-    "មុខងារ",
-    PAGE_OPTIONS,
-    horizontal=True,
-    key="active_page",
-    label_visibility="collapsed",
+tab_video, tab_translate, tab_srt_speech, tab_text_speech = st.tabs(
+    ["🎬 Video → SRT", "📝 AI Subtitle Translator", "📜 SRT → Speech", "🎙️ Text → Speech"]
 )
 
-if active_page == PAGE_OPTIONS[0]:
+with tab_video:
     st.markdown('<div class="section-title">1️⃣ Generate Subtitles (Khmer ខ្មែរ)</div>', unsafe_allow_html=True)
 
     uploaded_video = st.file_uploader(
@@ -2723,7 +2567,7 @@ if active_page == PAGE_OPTIONS[0]:
                 st.video(uploaded_video)
 
             if st.button("📝 Generate Khmer SRT", key="generate_srt", use_container_width=True):
-                if not valid_api_keys:
+                if not api_key:
                     st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
                 else:
                     video_path = save_upload(uploaded_video)
@@ -2820,7 +2664,7 @@ if active_page == PAGE_OPTIONS[0]:
             ):
                 if not st.session_state.srt_text.strip():
                     st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
-                elif not valid_api_keys:
+                elif not api_key:
                     st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
                 else:
                     analysis_video_path = None
@@ -2830,7 +2674,7 @@ if active_page == PAGE_OPTIONS[0]:
                         with st.spinner("កំពុងរក្សាតួអង្គ កែស្លាកគិតក្នុងចិត្ត និងកាត់ឃ្លាឱ្យខ្លីតាមពេលវេលា…"):
                             analyzed_srt = analyze_inner_thoughts(
                                 st.session_state.srt_text,
-                                valid_api_keys,
+                                api_key,
                                 model,
                                 analysis_video_path,
                             )
@@ -2953,28 +2797,29 @@ if active_page == PAGE_OPTIONS[0]:
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-if active_page == PAGE_OPTIONS[1]:
+with tab_translate:
     st.header("AI Subtitle Translator")
     st.info("បិទភ្ជាប់ Chinese SRT ហើយបកប្រែទៅ Khmer SRT ជាភាសាខ្មែរធម្មជាតិ ស្អាតសម្រាប់ទស្សនិកជនទូទៅ និងរក្សា timestamp ដើម។")
     source_srt = st.text_area("Chinese SRT", height=300, key="translator_source")
     if st.button("🌐 Translate to Khmer", key="translate_btn"):
         if not source_srt.strip():
             st.warning("សូមបញ្ចូល Chinese SRT។")
-        elif not valid_api_keys:
+        elif not api_key:
             st.error("សូមចុចប៊ូតុង ☰ បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
         else:
             try:
                 source_cues = srt_to_structured_cues(source_srt)
                 if not source_cues:
                     raise ValueError("Chinese SRT មិនត្រឹមត្រូវ។")
+                client = genai.Client(api_key=api_key)
                 translated_map = {}
                 for offset in range(0, len(source_cues), 35):
                     batch = source_cues[offset:offset + 35]
                     payload = "\n".join(
                         f'ID={cue["id"]} | SOURCE={cue["text"]}' for cue in batch
                     )
-                    response = gemini_text_with_key_rotation(
-                        valid_api_keys, model, TRANSLATE_PROMPT + "\n\nCUES:\n" + payload
+                    response = gemini_generate_with_retry(
+                        client, model, TRANSLATE_PROMPT + "\n\nCUES:\n" + payload
                     )
                     for item in parse_json_array(response.text or ""):
                         cue_id = int(item.get("id"))
@@ -2997,7 +2842,7 @@ if active_page == PAGE_OPTIONS[1]:
             except Exception as exc:
                 st.error(f"❌ {exc}")
 
-if active_page == PAGE_OPTIONS[2]:
+with tab_srt_speech:
     st.header("SRT → Speech")
     speech_srt = st.text_area(
         "Khmer SRT with [BOY] [GIRL] [M_YOUNG] [F_YOUNG] [M_ADULT] [F_ADULT] [M_OLD] [F_OLD] [M_THINK] [F_THINK] [NARRATOR_M] [NARRATOR_F]",
@@ -3015,7 +2860,7 @@ if active_page == PAGE_OPTIONS[2]:
             except Exception as exc:
                 st.error(f"❌ {exc}")
 
-if active_page == PAGE_OPTIONS[3]:
+with tab_text_speech:
     st.header("Text → Speech")
     plain_text = st.text_area("Khmer Text", height=260, key="plain_text_input")
     voice_choice = st.selectbox(
