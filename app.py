@@ -331,6 +331,21 @@ EMOTION AND DUBBING RULES:
 - Make angry lines firm, sad lines gentle, romantic lines warm, fearful lines urgent, and comic lines lively.
 - Avoid awkward repeated words, robotic phrasing, and long formal constructions.
 
+KHMER DUBBING QUALITY RULES:
+- Translate as if you are writing dialogue for a professional Khmer TV dubbing studio.
+- Every sentence must sound like a real Cambodian person speaking naturally.
+- Prefer intended meaning and emotion over literal wording.
+- Rewrite sentence structure whenever necessary so it flows naturally in Khmer.
+- Keep emotion and character continuity flowing from one subtitle to the next.
+- Never produce robotic, dry, textbook, or machine-translated Khmer.
+- Use familiar daily Khmer expressions only when they fit the character and situation.
+- If the source is emotional, make the Khmer line emotionally convincing without changing its meaning.
+- Avoid repeating the same words in consecutive subtitles unless the repetition is intentional.
+- If a direct translation sounds unnatural, reshape it into natural Khmer conversation.
+- Make every subtitle easy for Khmer AI voices to pronounce with natural rhythm and breathing.
+- The final dialogue should sound as if it was originally written and performed in Khmer.
+- Before returning each subtitle, silently ask: “Would a Cambodian naturally say this in a real conversation or movie?” If not, rewrite it.
+
 SUBTITLE LENGTH RULES:
 - Each cue includes MAX_WORDS. The Khmer text MUST stay at or below that word limit.
 - Prefer one short, clear spoken sentence per cue.
@@ -1342,11 +1357,18 @@ def _session_cookie_delete():
 
 
 def validate_customer_login(customer_name, access_code, existing_token="", acquire_session=False):
-    name = normalize_customer_name(customer_name)
+    """Validate a customer license without binding it to a device or browser.
+
+    A valid, active, unexpired access code may be used again after logout,
+    browser close, phone restart, or from another phone. The customer name is
+    kept for display but the access code is the authentication credential.
+    """
+    entered_name = normalize_customer_name(customer_name)
     code = normalize_access_code(access_code)
-    if not name or not code:
-        return False, "សូមបញ្ចូលឈ្មោះ និងលេខកូដ។", None, ""
-    attempt_key = _attempt_key(name, code)
+    if not code:
+        return False, "សូមបញ្ចូលលេខកូដ Access Code។", None, ""
+
+    attempt_key = _attempt_key(entered_name or "code-user", code)
     if acquire_session and _login_blocked(attempt_key):
         return False, f"បានសាកច្រើនដងពេក។ សូមរង់ចាំ {LOGIN_WINDOW_MINUTES} នាទី។", None, ""
 
@@ -1354,69 +1376,65 @@ def validate_customer_login(customer_name, access_code, existing_token="", acqui
     code_hash = _hash_code(code)
     failure_reason = ""
     fresh = None
-    token = existing_token
+    token = existing_token or secrets.token_urlsafe(32)
+
     with license_connection() as connection:
         row = connection.execute(
             "SELECT * FROM licenses WHERE access_code_hash=? OR access_code_display=?",
             (code_hash, code),
         ).fetchone()
-        if row is None or normalize_customer_name(row["customer_name"]).casefold() != name.casefold():
-            failure_reason = "លេខកូដ ឬឈ្មោះមិនត្រឹមត្រូវ។"
+
+        if row is None:
+            failure_reason = "លេខកូដមិនត្រឹមត្រូវ។"
         elif not bool(row["is_active"]):
             failure_reason = "លេខកូដនេះត្រូវបាន Owner បិទ។"
         elif now >= _parse_iso(row["expires_at"]):
             failure_reason = "លេខកូដរបស់អ្នកបានផុតកំណត់។ សូមទាក់ទង Owner។"
         else:
-            active_hash = str(row["active_session_hash"] or "")
-            last_seen = _parse_iso(row["active_session_last_seen"]) if row["active_session_last_seen"] else None
-            session_stale = not last_seen or (now - last_seen) > datetime.timedelta(minutes=SESSION_IDLE_MINUTES)
-            existing_hash = _hash_session(existing_token) if existing_token else ""
-
-            if active_hash and not session_stale and not hmac.compare_digest(active_hash, existing_hash):
-                failure_reason = "លេខកូដនេះកំពុងប្រើនៅលើឧបករណ៍មួយផ្សេងទៀត។"
-            elif acquire_session:
-                token = existing_token or secrets.token_urlsafe(32)
+            # No device lock and no single-session lock. A purchased code can
+            # be reused after logout/close and can work on any phone/browser.
+            if acquire_session:
                 connection.execute(
                     """
                     UPDATE licenses
-                    SET active_session_hash=?, active_session_last_seen=?, last_login_at=?,
+                    SET active_session_hash=NULL,
+                        active_session_last_seen=NULL,
+                        last_login_at=?,
                         login_count=login_count+1
                     WHERE id=?
                     """,
-                    (_hash_session(token), _iso(now), _iso(now), row["id"]),
+                    (_iso(now), row["id"]),
                 )
             else:
-                if not existing_token or not active_hash or not hmac.compare_digest(active_hash, existing_hash):
-                    failure_reason = "Session របស់អ្នកបានបញ្ចប់។ សូមចូលម្ដងទៀត។"
-                else:
-                    connection.execute(
-                        "UPDATE licenses SET active_session_last_seen=? WHERE id=?",
-                        (_iso(now), row["id"]),
-                    )
-            if not failure_reason:
-                connection.commit()
-                fresh = connection.execute("SELECT * FROM licenses WHERE id=?", (row["id"],)).fetchone()
+                connection.execute(
+                    "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL WHERE id=?",
+                    (row["id"],),
+                )
+            connection.commit()
+            fresh = connection.execute("SELECT * FROM licenses WHERE id=?", (row["id"],)).fetchone()
 
     if acquire_session:
         _record_login_attempt(attempt_key, not bool(failure_reason))
     if failure_reason:
         return False, failure_reason, None, ""
+
+    display_name = str(fresh["customer_name"] or entered_name or "Customer")
     if acquire_session:
-        _audit("customer_login", name, "success")
+        _audit("customer_login", display_name, "success|multi-device")
     return True, "", dict(fresh), token
 
 
 def release_customer_session(access_code, token, actor="customer"):
+    """Log out this browser only; never block reuse of the purchased code."""
     code = normalize_access_code(access_code)
-    token_hash = _hash_session(token) if token else ""
     with license_connection() as connection:
         row = connection.execute(
-            "SELECT id,customer_name,active_session_hash FROM licenses WHERE access_code_hash=? OR access_code_display=?",
+            "SELECT id,customer_name FROM licenses WHERE access_code_hash=? OR access_code_display=?",
             (_hash_code(code), code),
         ).fetchone()
-        if row and token_hash and hmac.compare_digest(str(row["active_session_hash"] or ""), token_hash):
+        if row:
             connection.execute(
-                "UPDATE licenses SET active_session_hash=NULL,active_session_last_seen=NULL WHERE id=?",
+                "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL WHERE id=?",
                 (row["id"],),
             )
             connection.commit()
@@ -1500,7 +1518,7 @@ def public_login_screen():
     with center:
         st.markdown("### 🔐 ចូលប្រើកម្មវិធី")
         with st.form("customer_login_form", clear_on_submit=False):
-            name = st.text_input("ឈ្មោះ", placeholder="ឈ្មោះដែល Owner បានចុះឈ្មោះ")
+            name = st.text_input("ឈ្មោះ (មិនបាច់បញ្ចូលក៏បាន)", placeholder="អាចទុកទទេបាន")
             code = st.text_input("Access Code", placeholder="KHBR-XXXX-XXXX", type="password")
             submitted = st.form_submit_button("ចូលប្រើកម្មវិធី", use_container_width=True)
         if submitted:
@@ -1515,7 +1533,7 @@ def public_login_screen():
                 st.rerun()
             else:
                 st.error(message)
-        st.caption("សូមទាក់ទង Owner ដើម្បីទទួលឈ្មោះ និង Access Code។")
+        st.caption("សូមទាក់ទង Owner ដើម្បីទទួល Access Code។ លេខកូដមានសុពលភាពអាចចូលម្ដងហើយម្ដងទៀត និងប្រើលើទូរសព្ទផ្សេងៗបាន។")
 
 
 def _copy_card(name, code, expires_text):
@@ -1644,6 +1662,12 @@ def admin_dashboard():
 
 
 initialize_license_database()
+# Compatibility cleanup: remove historical device/session locks created by older versions.
+with license_connection() as _lock_cleanup_connection:
+    _lock_cleanup_connection.execute(
+        "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL"
+    )
+    _lock_cleanup_connection.commit()
 hidden_owner_trigger()
 if st.session_state.get("admin_gate_visible", False) or st.session_state.get("admin_authenticated", False):
     admin_dashboard()
