@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "2.9"
+APP_VERSION = "3.0"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -285,18 +285,32 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
 PISITH='km-KH-PisethNeural'
 SREYMOM='km-KH-SreymomNeural'
 VOICE_PROFILES={
-# Clear, social-media friendly levels. Pitch changes stay small to avoid robotic voices.
-'M':{'voice':PISITH,'rate':'-3%','pitch':'+0Hz','volume':'+12%'},
-'F':{'voice':SREYMOM,'rate':'-3%','pitch':'+0Hz','volume':'+12%'},
-'BOY':{'voice':PISITH,'rate':'-1%','pitch':'+6Hz','volume':'+13%'},
-'GIRL':{'voice':SREYMOM,'rate':'-1%','pitch':'+7Hz','volume':'+13%'},
-'OLD_M':{'voice':PISITH,'rate':'-7%','pitch':'-5Hz','volume':'+13%'},
-'OLD_F':{'voice':SREYMOM,'rate':'-7%','pitch':'-4Hz','volume':'+13%'},
-'M_THINK':{'voice':PISITH,'rate':'-6%','pitch':'-2Hz','volume':'+8%'},
-'F_THINK':{'voice':SREYMOM,'rate':'-6%','pitch':'-2Hz','volume':'+8%'},
-'NARRATOR_M':{'voice':PISITH,'rate':'-4%','pitch':'-1Hz','volume':'+14%'},
-'NARRATOR_F':{'voice':SREYMOM,'rate':'-4%','pitch':'-1Hz','volume':'+14%'}
+# Warm, natural profiles. Large pitch boosts make Khmer Neural voices thin/airy,
+# so age differences use mostly rate and only a very small pitch movement.
+'BOY':{'voice':PISITH,'rate':'+4%','pitch':'+2Hz','volume':'+5%'},
+'GIRL':{'voice':SREYMOM,'rate':'+4%','pitch':'+3Hz','volume':'+5%'},
+'M_YOUNG':{'voice':PISITH,'rate':'+1%','pitch':'+0Hz','volume':'+6%'},
+'F_YOUNG':{'voice':SREYMOM,'rate':'+1%','pitch':'+1Hz','volume':'+6%'},
+'M_ADULT':{'voice':PISITH,'rate':'-3%','pitch':'-3Hz','volume':'+7%'},
+'F_ADULT':{'voice':SREYMOM,'rate':'-2%','pitch':'-1Hz','volume':'+7%'},
+'M_OLD':{'voice':PISITH,'rate':'-11%','pitch':'-8Hz','volume':'+8%'},
+'F_OLD':{'voice':SREYMOM,'rate':'-10%','pitch':'-6Hz','volume':'+8%'},
+'M_THINK':{'voice':PISITH,'rate':'-7%','pitch':'-4Hz','volume':'+5%'},
+'F_THINK':{'voice':SREYMOM,'rate':'-7%','pitch':'-3Hz','volume':'+5%'},
+'NARRATOR_M':{'voice':PISITH,'rate':'-7%','pitch':'-6Hz','volume':'+8%'},
+'NARRATOR_F':{'voice':SREYMOM,'rate':'-6%','pitch':'-4Hz','volume':'+8%'},
+# Backward-compatible labels for older SRT files.
+'M':{'voice':PISITH,'rate':'-3%','pitch':'-2Hz','volume':'+7%'},
+'F':{'voice':SREYMOM,'rate':'-3%','pitch':'-1Hz','volume':'+7%'},
+'OLD_M':{'voice':PISITH,'rate':'-8%','pitch':'-5Hz','volume':'+8%'},
+'OLD_F':{'voice':SREYMOM,'rate':'-8%','pitch':'-3Hz','volume':'+8%'}
 }
+
+# Smooth-dubbing controls: gentle fades remove clicks/cuts when speaker labels change.
+VOICE_FADE_IN_SECONDS = 0.045
+VOICE_FADE_OUT_SECONDS = 0.070
+MIN_VOICE_GAP_MS = 12
+MAX_TEMPO_SPEED = 1.65
 
 TRANSLATE_PROMPT = """You are an expert Khmer movie subtitler, Chinese-drama translator, dubbing script writer, and character-continuity editor.
 The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
@@ -306,31 +320,44 @@ Return a JSON array only. Each object must contain exactly:
 {"id": integer, "tag": string, "text": string}
 
 Allowed tags:
-M, F, BOY, GIRL, OLD_M, OLD_F, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
+BOY, GIRL, M_YOUNG, F_YOUNG, M_ADULT, F_ADULT, M_OLD, F_OLD, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
 
 SPEAKER AND CHARACTER RULES:
 - Assign the tag to the person who is actually speaking, not merely the person visible on screen.
-- Keep each recurring character on a consistent gender/age/role tag across nearby cues.
-- Use M or F for normal audible dialogue, including calm, sad, angry, soft, romantic, or whispered speech.
+- Dialogue from a distant, off-camera, quiet, echoing, or partially covered speaker is still real dialogue. Translate it normally and completely; never shorten or omit it merely because the speaker sounds far away.
+- Do not change meaning, pronouns, or speaker identity because a voice is louder, quieter, nearer, farther, muffled, or reverberant.
+- Keep each recurring character on a consistent gender/age/role tag across nearby cues. Never switch a character's label merely because the emotion, volume, camera angle, or speaking style changes.
+- Before assigning a new tag, compare with the preceding and following cues. Change the tag only when the actual speaker changes or clear video/audio evidence proves a different age/gender/role.
+- Use BOY/GIRL for children, M_YOUNG/F_YOUNG for teenagers or young adults, M_ADULT/F_ADULT for ordinary adults, and M_OLD/F_OLD for elderly speakers.
+- Choose age from the actual voice and visible character context; do not guess an elderly or child label from clothing alone.
 - Use M_THINK or F_THINK only for an unheard inner thought or internal monologue.
 - Use NARRATOR tags only for true off-screen narration, not for a character's thought.
-- Use BOY/GIRL and OLD_M/OLD_F only when the voice or visual context clearly supports it.
+- Use BOY/GIRL and M_OLD/F_OLD only when age is clearly supported; otherwise prefer M_YOUNG/F_YOUNG or M_ADULT/F_ADULT.
 
 PROFESSIONAL KHMER TRANSLATION RULES:
-- Translate into natural spoken Khmer used by Cambodian people in real daily conversation.
-- Never translate word-for-word and never produce stiff, dry, book-like Khmer.
+- Translate into smooth, natural spoken Khmer that Cambodian people actually use in everyday conversation and movie dialogue.
+- Never translate word-for-word. First understand the whole meaning, situation, relationship, and emotion, then rewrite it naturally in Khmer.
+- Avoid formal, book-like, bureaucratic, robotic, dry, or machine-translated Khmer unless the character and scene truly require formal speech.
+- Prefer short, familiar, easy-to-understand Khmer expressions. The sentence should sound natural when spoken aloud, not merely look grammatically correct in writing.
 - Preserve the original meaning, intention, emotion, humor, threat, sarcasm, romance, fear, grief, status, and relationship.
-- You may reorder, shorten, combine wording inside the same cue, or add a tiny natural connector when needed, but never change the meaning.
+- You may reorder wording inside the same cue and replace unnatural literal phrases with familiar Khmer speech, but you MUST preserve every audible idea, response, interjection, negation, name, number, command, and emotional particle. Never invent information or change the meaning.
+- Do NOT delete short words, filler sounds, reactions, repeated words, names, negations, or tiny replies when they are audible in the source. Translate natural reactions such as 嗯, 啊, 哦, 喂, 哎, 好, 不, 是, 什么 into suitable spoken Khmer such as អឺ, អា៎, អូ, ហេ៎, អុញ, បាន, ទេ, មែន, អី—according to context.
+- Use conversational sentence order and natural responses such as “អញ្ចឹងមែន?”, “បានហើយ”, “មិនអីទេ”, “តើមានរឿងអី?”, or similar only when they accurately match the source meaning and scene.
 - Choose pronouns and forms of address that fit age, gender, rank, relationship, and scene context, such as: បង/អូន, ខ្ញុំ/លោក, ឯង/អញ, ពួកម៉ាក, សម្លាញ់, លោកគ្រូ, សិស្ស, ព្រះអង្គ, អធិរាជ, ម្ចាស់, មេទ័ព, លោកតា, លោកយាយ.
 - Use natural Khmer emotion particles only when suitable, for example: ណា, ណ៎, ចា៎, ចុះ, អញ្ចឹង, ហ្នឹង, មែនទេ, វើយ, ហ្មង, ហាស, អូហ៍.
-- Do not overuse slang, insults, or particles. Match the actor's personality and the scene.
+- FACEBOOK-SAFE LANGUAGE MODE IS ALWAYS ON: do not output profanity, obscene expressions, sexual insults, degrading slurs, hateful language, direct humiliation, or unnecessarily graphic wording.
+- When the source contains rude or offensive speech, keep the intention and emotion but replace it with a clean, natural Khmer expression suitable for a general Facebook audience. For example, use context-appropriate clean phrases such as «មនុស្សអាក្រក់», «ឈប់និយាយទៅ», «កុំធ្វើបែបនេះ», «គួរឱ្យខឹងមែន», or «ចេញទៅ» instead of reproducing vulgar wording.
+- Do not sanitize so aggressively that the plot meaning disappears. Preserve whether the speaker is angry, threatening, mocking, shocked, or rejecting someone, but express it without offensive vocabulary.
+- Never create insults that were not present in the source. Never target protected characteristics, disability, appearance, family members, or private sexual matters.
+- Do not overuse slang, insults, or particles. Match the actor's personality and the scene while keeping the wording clean enough for a broad Facebook audience.
 - For historical, cultivation, martial-arts, palace, fantasy, or modern-drama terms, choose Khmer wording that viewers understand while keeping names and ranks consistent.
 - If a source phrase contains an idiom, joke, hidden meaning, or wordplay, recreate the intended effect naturally in Khmer instead of translating the literal words.
 - Do not leave Chinese characters, pinyin, English explanation, translator notes, or brackets inside the Khmer dialogue.
 
 EMOTION AND DUBBING RULES:
 - Write each line so that Khmer AI speech sounds smooth, emotional, and easy to pronounce.
-- Use punctuation naturally to guide pauses and breathing, but avoid excessive punctuation.
+- Use punctuation naturally to guide pauses, breathing, and rising/falling intonation, but avoid excessive punctuation.
+- End questions with ? and emotional exclamations with ! only when justified; use Khmer commas or ellipses sparingly for gentle pauses so TTS does not sound flat or abruptly cut.
 - Make angry lines firm, sad lines gentle, romantic lines warm, fearful lines urgent, and comic lines lively.
 - Avoid awkward repeated words, robotic phrasing, and long formal constructions.
 
@@ -349,11 +376,26 @@ KHMER DUBBING QUALITY RULES:
 - The final dialogue should sound as if it was originally written and performed in Khmer.
 - Before returning each subtitle, silently ask: “Would a Cambodian naturally say this in a real conversation or movie?” If not, rewrite it.
 
-SUBTITLE LENGTH RULES:
-- Each cue includes MAX_WORDS. The Khmer text MUST stay at or below that word limit.
-- Prefer one short, clear spoken sentence per cue.
-- Keep the core meaning and emotional force while removing unnecessary repetition and filler.
-- Never merge, split, omit, or renumber cues.
+STRICT TIMING AND SUBTITLE LENGTH RULES:
+- The supplied start and end timestamp of every cue is locked. Never move dialogue earlier or later, never borrow time from another cue, and never merge or split cues.
+- Each cue includes MAX_WORDS. The Khmer text MUST stay at or below that word limit so the generated voice can finish inside its own timestamp.
+- Start speaking at the cue start and finish before the cue end. Do not let one character's voice overlap the next cue unless the original timestamps themselves overlap.
+- Shorten only by choosing concise natural Khmer wording; never delete a meaning-bearing word, negation, name, number, command, response, or audible reaction.
+- Cut and reshape the translation so it fits the subtitle time and can be spoken comfortably before the cue ends.
+- Prefer one short, clear, natural spoken sentence per cue.
+- Keep the complete meaning and emotional force. Never remove an audible word merely because it is short, repeated, a filler, a reaction, or difficult to fit. Use concise Khmer wording while preserving it.
+- Do not make a line unnaturally incomplete merely to shorten it; choose a shorter natural Khmer expression instead.
+- Never merge, split, omit, summarize away, or renumber cues. Every supplied cue must contain spoken Khmer text unless the source cue is truly silent/non-speech.
+
+MANDATORY NO-SKIP RULES:
+- Translate 100% of the audible speech in every cue, including one-word replies and tiny sounds.
+- Never return an empty text value for a cue containing speech.
+- Preserve negatives such as “not/no/don’t”, names, numbers, titles, greetings, calls, sighs, surprise, agreement, disagreement, and repeated emphasis.
+- Do not summarize two clauses into one if that removes information.
+- If the source is very short, return a correspondingly short Khmer utterance rather than deleting it.
+- Recheck each cue against SOURCE before output: every audible element must be represented in Khmer.
+- Final safety check for every cue: remove or rewrite any vulgar, obscene, hateful, sexually insulting, or degrading word into clean natural Khmer while preserving the scene's meaning and emotion.
+- Final timing check for every cue: wording must be speakable within that cue's exact duration without rushing, dragging, starting early, or finishing late.
 
 OUTPUT RULES:
 - Return exactly one object for every supplied cue ID, in the same order.
@@ -367,18 +409,19 @@ Return a JSON array only with exactly:
 {"id": integer, "tag": string, "text": string}
 
 Allowed tags:
-M, F, BOY, GIRL, OLD_M, OLD_F, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
+BOY, GIRL, M_YOUNG, F_YOUNG, M_ADULT, F_ADULT, M_OLD, F_OLD, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
 
 Rules:
 - Return exactly one object per cue ID in the same order.
 - Do not alter timestamps, cue count, or cue order.
 - Keep recurring character identity and tag consistent across nearby cues.
-- Ordinary audible dialogue must remain M or F, even when calm, soft, sad, angry, or whispering.
+- Ordinary audible dialogue must use the correct age-and-gender label, even when calm, soft, sad, angry, or whispering.
 - Use THINK only for unheard internal monologue; use NARRATOR only for true narration.
-- Use BOY/GIRL and OLD_M/OLD_F only when age is clearly supported.
-- Rewrite Khmer into fluent, natural spoken Cambodian dialogue suitable for professional movie dubbing; never use stiff word-for-word phrasing.
+- Use BOY/GIRL and M_OLD/F_OLD only when age is clearly supported; use M_YOUNG/F_YOUNG for young speakers and M_ADULT/F_ADULT for adults.
+- Rewrite Khmer into fluent, natural everyday Cambodian dialogue suitable for professional movie dubbing; never use stiff word-for-word or book-like phrasing.
+- Read each Khmer line as spoken dialogue: if a Cambodian would not normally say it that way, rewrite it using shorter and more familiar wording.
 - Respect each cue's MAX_WORDS strictly so dubbing can play at a normal pace.
-- Preserve meaning and emotion but remove repeated, explanatory, or unnecessary words.
+- Preserve every spoken meaning, including short replies, particles, hesitation sounds, repeated words, names, negations, and small expressions. Never delete a cue or omit a spoken word merely to shorten it; shorten only by natural Khmer rephrasing without information loss.
 - JSON only. No explanations or markdown.
 """
 
@@ -422,19 +465,76 @@ def decrypt_api_keys(cookie_value):
         return ""
 
 
-def load_private_api_keys():
-    """Read only this browser/device's encrypted API-key cookie."""
+def _current_customer_code():
+    """Return the authenticated customer's normalized access code."""
     try:
-        return decrypt_api_keys(cookie_manager.get(API_COOKIE_NAME))
+        return normalize_access_code(st.session_state.get("customer_code", ""))
+    except Exception:
+        return str(st.session_state.get("customer_code", "") or "").strip().upper()
+
+
+def _load_api_keys_from_account():
+    """Load encrypted API keys from the persistent customer account database."""
+    code = _current_customer_code()
+    if not code:
+        return ""
+    try:
+        with license_connection() as connection:
+            row = connection.execute(
+                "SELECT saved_api_keys_encrypted FROM licenses "
+                "WHERE access_code_hash=? OR access_code_display=?",
+                (_hash_code(code), code),
+            ).fetchone()
+        if not row:
+            return ""
+        return decrypt_api_keys(row["saved_api_keys_encrypted"] or "")
     except Exception:
         return ""
 
 
-def save_private_api_keys(api_keys_text):
-    """Persist encrypted API keys in this browser/device until Delete is pressed."""
+def _save_api_keys_to_account(api_keys_text):
+    """Save encrypted API keys against the signed-in account, not only Safari."""
+    code = _current_customer_code()
+    if not code:
+        return False
     cleaned = "\n".join(
-        line.strip() for line in api_keys_text.splitlines() if line.strip()
+        line.strip() for line in str(api_keys_text or "").splitlines() if line.strip()
     )
+    encrypted = encrypt_api_keys(cleaned) if cleaned else ""
+    try:
+        with license_connection() as connection:
+            connection.execute(
+                "UPDATE licenses SET saved_api_keys_encrypted=? "
+                "WHERE access_code_hash=? OR access_code_display=?",
+                (encrypted, _hash_code(code), code),
+            )
+            connection.commit()
+        return True
+    except Exception:
+        return False
+
+
+def load_private_api_keys():
+    """Load from the account database first; Safari cookie is only a fallback."""
+    account_keys = _load_api_keys_from_account()
+    if account_keys:
+        return account_keys
+    try:
+        browser_keys = decrypt_api_keys(cookie_manager.get(API_COOKIE_NAME))
+    except Exception:
+        browser_keys = ""
+    # Migrate an old browser-only saved key into the signed-in account.
+    if browser_keys:
+        _save_api_keys_to_account(browser_keys)
+    return browser_keys
+
+
+def save_private_api_keys(api_keys_text):
+    """Persist keys in the customer account DB and also keep a browser fallback."""
+    cleaned = "\n".join(
+        line.strip() for line in str(api_keys_text or "").splitlines() if line.strip()
+    )
+    saved_to_account = _save_api_keys_to_account(cleaned)
     try:
         if cleaned:
             cookie_manager.set(
@@ -446,20 +546,26 @@ def save_private_api_keys(api_keys_text):
         else:
             cookie_manager.delete(API_COOKIE_NAME, key="delete_private_api_cookie")
     except Exception:
-        # Session state still keeps the key private for the active user session.
         pass
+    return saved_to_account
 
+
+def delete_private_api_keys():
+    """Delete the key only when the user explicitly presses Delete Key."""
+    _save_api_keys_to_account("")
+    try:
+        cookie_manager.delete(API_COOKIE_NAME, key="delete_private_api_cookie_explicit")
+    except Exception:
+        pass
 
 def api_keys_changed():
     save_private_api_keys(st.session_state.get("api_keys_manager", ""))
 
 
-def clear_private_user_session():
-    """Remove only the current user's key and working files/state."""
-    try:
-        cookie_manager.delete(API_COOKIE_NAME, key="logout_private_api_cookie")
-    except Exception:
-        pass
+def clear_private_user_session(delete_saved_api=False):
+    """Clear temporary work. Saved API key is removed only by the Delete button."""
+    if delete_saved_api:
+        delete_private_api_keys()
     for state_key in (
         "api_keys_manager",
         "srt_text",
@@ -580,11 +686,21 @@ def optimize_video_for_processing(source_path, output_path):
 
 
 def extract_audio(video_path, audio_path):
-    """Extract compact mono 16 kHz FLAC instead of a large uncompressed WAV."""
+    """Prepare speech for ASR while preserving both near and distant voices."""
+    # Dynamic normalization raises quiet/distant dialogue without crushing nearby
+    # speakers. Gentle denoise removes steady background hiss while retaining speech.
+    audio_filter = (
+        "highpass=f=70,lowpass=f=7800,"
+        "afftdn=nf=-28:tn=1,"
+        "dynaudnorm=f=250:g=9:p=0.95:m=12,"
+        "acompressor=threshold=-30dB:ratio=2.2:attack=12:release=180:makeup=1.35,"
+        "alimiter=limit=0.97"
+    )
     result = subprocess.run(
         [
             "ffmpeg", "-y", "-i", str(video_path),
             "-vn", "-ac", "1", "-ar", "16000",
+            "-af", audio_filter,
             "-c:a", "flac", "-compression_level", "8", str(audio_path),
         ],
         capture_output=True,
@@ -595,37 +711,83 @@ def extract_audio(video_path, audio_path):
         raise RuntimeError(result.stderr[-1200:] or "មិនអាចទាញសំឡេងចេញពីវីដេអូបានទេ។")
 
 
+def _standardize_whisper_segments(segments):
+    """Split ASR output into readable, timing-accurate subtitle cues."""
+    cues = []
+    max_duration = 5.5
+    max_chars = 34
+    punctuation = set("。！？!?；;，,")
+
+    def emit(words):
+        if not words:
+            return
+        text = "".join((getattr(w, "word", "") or "") for w in words).strip()
+        if not text:
+            return
+        start = max(0.0, float(getattr(words[0], "start", 0.0) or 0.0))
+        end = max(start + 0.20, float(getattr(words[-1], "end", start + 0.20) or start + 0.20))
+        cues.append({"id": len(cues) + 1, "start": start, "end": end, "source": text})
+
+    for segment in segments:
+        words = [w for w in (getattr(segment, "words", None) or []) if (getattr(w, "word", "") or "").strip()]
+        if not words:
+            text = (getattr(segment, "text", "") or "").strip()
+            if text:
+                start = max(0.0, float(segment.start))
+                end = max(start + 0.20, float(segment.end))
+                cues.append({"id": len(cues) + 1, "start": start, "end": end, "source": text})
+            continue
+
+        current = []
+        for word in words:
+            if current:
+                gap = max(0.0, float(word.start or 0.0) - float(current[-1].end or 0.0))
+                duration = float(current[-1].end or 0.0) - float(current[0].start or 0.0)
+                chars = len("".join((getattr(w, "word", "") or "") for w in current))
+                if gap >= 0.55 or duration >= max_duration or chars >= max_chars:
+                    emit(current)
+                    current = []
+            current.append(word)
+            token = (getattr(word, "word", "") or "").strip()
+            duration = float(word.end or 0.0) - float(current[0].start or 0.0)
+            if token and token[-1] in punctuation and duration >= 0.65:
+                emit(current)
+                current = []
+        emit(current)
+
+    # Remove only tiny accidental overlaps; never push a cue far from the speech.
+    previous_end = 0.0
+    for cue in cues:
+        if cue["start"] < previous_end and previous_end - cue["start"] <= 0.12:
+            cue["start"] = previous_end
+        if cue["end"] <= cue["start"]:
+            cue["end"] = cue["start"] + 0.25
+        previous_end = cue["end"]
+    for index, cue in enumerate(cues, 1):
+        cue["id"] = index
+    return cues
+
+
 def transcribe_with_whisper(wav_path):
     model = load_whisper_model()
     segments, _ = model.transcribe(
         str(wav_path),
         language="zh",
-        beam_size=5,
+        beam_size=10,
+        best_of=5,
         vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 250},
+        vad_parameters={
+            "min_silence_duration_ms": 220,
+            "min_speech_duration_ms": 45,
+            "speech_pad_ms": 380,
+        },
         condition_on_previous_text=True,
-        word_timestamps=False,
+        word_timestamps=True,
+        no_speech_threshold=0.65,
+        log_prob_threshold=-1.5,
+        compression_ratio_threshold=2.6,
     )
-    cues = []
-    last_end = 0.0
-    for segment in segments:
-        source = (segment.text or "").strip()
-        if not source:
-            continue
-        start = max(0.0, float(segment.start))
-        end = max(start + 0.18, float(segment.end))
-        # Remove tiny ASR overlaps while keeping the real Whisper timing.
-        if start < last_end and (last_end - start) < 0.35:
-            start = last_end
-        if end <= start:
-            end = start + 0.35
-        cues.append({
-            "id": len(cues) + 1,
-            "start": start,
-            "end": end,
-            "source": source,
-        })
-        last_end = end
+    cues = _standardize_whisper_segments(list(segments))
     if not cues:
         raise RuntimeError("Whisper មិនបានរកឃើញសន្ទនាក្នុងវីដេអូនេះទេ។")
     return cues
@@ -659,10 +821,11 @@ def parse_json_array(raw_text):
 
 
 def cue_word_limit(start, end):
-    """Conservative Khmer spoken-word budget for natural dubbing speed."""
+    """Khmer spoken-word budget that fits normal dialogue speed."""
     duration = max(0.35, float(end) - float(start))
-    # Roughly 2.0 short Khmer words per second, with a small minimum.
-    return max(2, min(18, int(duration * 2.0 + 0.5)))
+    # About 3 Khmer spoken units per second, with a small allowance for short replies.
+    # Meaning-bearing words may not be removed; the translator must use concise wording.
+    return max(2, min(22, int(duration * 3.0 + 1.0)))
 
 
 def khmer_word_count(text):
@@ -725,7 +888,7 @@ def repair_translation_items(client, model_name, uploaded_video, cues, items):
                 f'ID={cue["id"]} | MAX_WORDS={cue_word_limit(cue["start"], cue["end"])} | SOURCE={cue["source"]}'
                 for cue in group
             )
-            prompt = TRANSLATE_PROMPT + "\nIMPORTANT: These cues failed before. Translate EVERY cue fully into Khmer. Never copy Chinese characters.\n\nCUES:\n" + payload
+            prompt = TRANSLATE_PROMPT + "\nIMPORTANT: These cues failed before. Translate EVERY audible word, tiny response, negation, name, number, filler, and emotional reaction fully into natural Khmer. Never omit or summarize any element. Never copy Chinese characters.\n\nCUES:\n" + payload
             contents = [uploaded_video, prompt] if uploaded_video is not None else [prompt]
             response = gemini_generate_with_retry(client, model_name, contents)
             for row in parse_json_array(response.text or ""):
@@ -836,7 +999,7 @@ def translate_cues(client, model_name, uploaded_video, cues):
                 continue
             tag = str(item.get("tag", "M")).upper().strip()
             if tag not in VOICE_PROFILES:
-                tag = "M"
+                tag = "M_ADULT"
             translated = normalize_dialogue(item.get("text", ""))
             if translated:
                 result_by_id[cue_id] = {"tag": tag, "text": translated}
@@ -1005,7 +1168,7 @@ def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
                 continue
             tag = str(item.get("tag", "M")).upper().strip()
             if tag not in VOICE_PROFILES:
-                tag = "M"
+                tag = "M_ADULT"
             dialogue = str(item.get("text", "")).strip()
             if dialogue:
                 updated[cue_id] = {"tag": tag, "text": dialogue}
@@ -1021,7 +1184,7 @@ def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
 
 def parse_srt(srt_text):
     time_re=re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
-    tag_re=re.compile(r'^\[(M|F|BOY|GIRL|OLD_M|OLD_F|M_THINK|F_THINK|NARRATOR_M|NARRATOR_F)\]\s*',re.I)
+    tag_re=re.compile(r'^\[(BOY|GIRL|M_YOUNG|F_YOUNG|M_ADULT|F_ADULT|M_OLD|F_OLD|M_THINK|F_THINK|NARRATOR_M|NARRATOR_F|M|F|OLD_M|OLD_F)\]\s*',re.I)
     def to_ms(v):
         h,m,s,ms=map(int,v); return ((h*60+m)*60+s)*1000+ms
     cues=[]
@@ -1032,7 +1195,7 @@ def parse_srt(srt_text):
         match=time_re.search(lines[idx])
         if not match: continue
         dialogue=' '.join(lines[idx+1:]).strip(); tag_match=tag_re.match(dialogue)
-        tag=tag_match.group(1).upper() if tag_match else 'M'
+        tag=tag_match.group(1).upper() if tag_match else 'M_ADULT'
         if tag_match: dialogue=dialogue[tag_match.end():].strip()
         if dialogue:
             start_ms=to_ms(match.groups()[:4]); end_ms=to_ms(match.groups()[4:])
@@ -1047,8 +1210,19 @@ def run_async(coro):
     finally:
         loop.close(); asyncio.set_event_loop(None)
 
+def prepare_tts_text(text):
+    """Prepare conversational Khmer for smoother Edge-TTS rhythm and intonation."""
+    clean = normalize_dialogue(text)
+    clean = re.sub(r"\s+([,!?។])", r"\1", clean)
+    clean = re.sub(r"([,!?។]){2,}", r"\1", clean)
+    # A final Khmer full stop gives declarative lines a gentle natural fall.
+    if clean and clean[-1] not in "!?។…":
+        clean += "។"
+    return clean
+
+
 async def synthesize(text, profile, output_path):
-    clean_text = normalize_dialogue(text)
+    clean_text = prepare_tts_text(text)
     if not clean_text:
         raise ValueError('មានបន្ទាត់ SRT ទទេ។')
     last_error = None
@@ -1069,6 +1243,25 @@ async def synthesize(text, profile, output_path):
             last_error = exc
             await asyncio.sleep(0.8)
     raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
+
+def character_voice_filters(tag):
+    """Subtle per-role tone shaping so age/role labels do not all sound identical."""
+    mapping = {
+        'BOY': ['equalizer=f=180:t=q:w=1.0:g=-0.8', 'equalizer=f=2900:t=q:w=1.0:g=1.0'],
+        'GIRL': ['equalizer=f=180:t=q:w=1.0:g=-1.0', 'equalizer=f=3000:t=q:w=1.0:g=1.0'],
+        'M_YOUNG': ['equalizer=f=190:t=q:w=1.0:g=0.7', 'equalizer=f=2500:t=q:w=1.0:g=0.5'],
+        'F_YOUNG': ['equalizer=f=220:t=q:w=1.0:g=0.4', 'equalizer=f=2600:t=q:w=1.0:g=0.6'],
+        'M_ADULT': ['equalizer=f=170:t=q:w=1.0:g=1.6', 'equalizer=f=3200:t=q:w=1.0:g=-0.4'],
+        'F_ADULT': ['equalizer=f=220:t=q:w=1.0:g=0.9', 'equalizer=f=3000:t=q:w=1.0:g=0.2'],
+        'M_OLD': ['equalizer=f=140:t=q:w=1.0:g=2.2', 'equalizer=f=2600:t=q:w=1.0:g=-1.0', 'lowpass=f=7200:p=2'],
+        'F_OLD': ['equalizer=f=180:t=q:w=1.0:g=1.7', 'equalizer=f=2800:t=q:w=1.0:g=-0.8', 'lowpass=f=7400:p=2'],
+        'M_THINK': ['equalizer=f=180:t=q:w=1.0:g=1.2', 'equalizer=f=3500:t=q:w=1.0:g=-1.0', 'volume=0.96'],
+        'F_THINK': ['equalizer=f=220:t=q:w=1.0:g=0.8', 'equalizer=f=3600:t=q:w=1.0:g=-0.8', 'volume=0.96'],
+        'NARRATOR_M': ['equalizer=f=150:t=q:w=1.0:g=2.0', 'equalizer=f=2200:t=q:w=1.0:g=0.8'],
+        'NARRATOR_F': ['equalizer=f=200:t=q:w=1.0:g=1.3', 'equalizer=f=2300:t=q:w=1.0:g=0.7'],
+    }
+    return mapping.get(tag, [])
+
 
 def probe_audio_duration(path):
     result = subprocess.run(
@@ -1100,28 +1293,43 @@ def atempo_chain(speed):
 
 
 def create_mp3(srt_text, progress_callback=None):
+    """
+    Create one synchronized Khmer MP3.
+
+    v3.0 rules:
+    - Every voice starts at the original SRT start timestamp.
+    - A clip is fitted inside the time available before the next cue.
+    - Generated voices never overlap or compete with one another.
+    - Breathy high frequencies are reduced without making speech muddy.
+    - Loudness is mastered once at the end instead of aggressively per clip.
+    """
     cues = parse_srt(srt_text)
     if not cues:
         raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
+
     chinese_rows = [i + 1 for i, cue in enumerate(cues) if contains_cjk(cue['text'])]
     if chinese_rows:
-        raise ValueError(f'SRT នៅមានអក្សរចិននៅបន្ទាត់៖ {chinese_rows[:20]}។ សូម Generate SRT ឡើងវិញ។')
+        raise ValueError(
+            f'SRT នៅមានអក្សរចិននៅបន្ទាត់៖ {chinese_rows[:20]}។ '
+            'សូម Generate SRT ឡើងវិញ។'
+        )
 
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
         clips = []
         clip_durations = []
-
         total_cues = len(cues)
+
         if progress_callback:
             progress_callback(2, "កំពុងរៀបចំសំឡេងតួអង្គ…")
 
         for index, cue in enumerate(cues):
             clip = root / f'clip_{index:04d}.mp3'
-            profile = VOICE_PROFILES.get(cue['tag'], VOICE_PROFILES['M'])
+            profile = VOICE_PROFILES.get(cue['tag'], VOICE_PROFILES['M_ADULT'])
             run_async(synthesize(cue['text'], profile, clip))
             clips.append(clip)
             clip_durations.append(probe_audio_duration(clip))
+
             if progress_callback:
                 percent = 5 + int(((index + 1) / total_cues) * 82)
                 progress_callback(
@@ -1136,57 +1344,84 @@ def create_mp3(srt_text, progress_callback=None):
         filters = []
         labels = []
         final_end_ms = 0
-        previous_end_ms = 0
 
         for index, cue in enumerate(cues):
-            slot_seconds = max(0.25, (cue['end'] - cue['start']) / 1000.0)
+            start_ms = max(0, int(cue['start']))
+            cue_end_ms = max(start_ms + 250, int(cue['end']))
+
+            # The next voice owns its exact start time. The current voice must
+            # finish before that point, so two generated speakers never overlap.
+            if index + 1 < total_cues:
+                next_start_ms = max(start_ms + 250, int(cues[index + 1]['start']))
+                protected_end_ms = min(cue_end_ms, next_start_ms - MIN_VOICE_GAP_MS)
+            else:
+                protected_end_ms = cue_end_ms
+
+            if protected_end_ms <= start_ms + 180:
+                protected_end_ms = start_ms + 180
+
+            slot_seconds = max(0.18, (protected_end_ms - start_ms) / 1000.0)
             audio_seconds = clip_durations[index]
 
-            # Never allow two generated voices to talk over each other.
-            # A cue starts at its timestamp, or immediately after the previous
-            # voice finishes when the source timestamps overlap.
-            start_ms = max(0, cue['start'], previous_end_ms + (40 if index else 0))
+            # Fit the spoken line to its real available slot. We allow a moderate
+            # speed increase, then hard-trim only as the final overlap safeguard.
+            required_speed = audio_seconds / slot_seconds
+            safe_speed = min(max(1.0, required_speed), MAX_TEMPO_SPEED)
+            tempo = atempo_chain(safe_speed) if safe_speed > 1.001 else ''
+            rendered_seconds = audio_seconds / safe_speed
+            trim_seconds = min(rendered_seconds, slot_seconds)
 
-            # Fit only moderately. Extreme acceleration sounds robotic.
-            speed = audio_seconds / slot_seconds
-            tempo = ''
-            rendered_seconds = audio_seconds
-            if speed > 1.04:
-                safe_speed = min(speed, 1.32)
-                tempo = atempo_chain(safe_speed)
-                rendered_seconds = audio_seconds / safe_speed
+            fade_in = min(VOICE_FADE_IN_SECONDS, max(0.015, trim_seconds * 0.10))
+            fade_out = min(VOICE_FADE_OUT_SECONDS, max(0.025, trim_seconds * 0.14))
+            fade_out_start = max(0.01, trim_seconds - fade_out)
 
             label = f'a{index}'
             parts = [f'[{index}:a]asetpts=PTS-STARTPTS']
             if tempo:
                 parts.append(tempo)
 
-            # Normalize every voice clip before mixing so quiet narration and
-            # thought voices remain clearly audible.
+            # Warm, controlled speech chain:
+            # - reduce rumble and strong airy hiss
+            # - keep Khmer consonants understandable
+            # - use gentle compression only
             parts.extend([
-                'highpass=f=70',
-                'lowpass=f=14500',
-                'loudnorm=I=-16:TP=-2:LRA=7',
-                'acompressor=threshold=-20dB:ratio=2.5:attack=8:release=100:makeup=2',
-                'afade=t=in:st=0:d=0.025',
-                f'afade=t=out:st={max(0.02, rendered_seconds-0.04):.3f}:d=0.04',
+                'highpass=f=75:p=2',
+                'lowpass=f=7600:p=2',
+                'equalizer=f=180:t=q:w=1.0:g=1.2',
+                'equalizer=f=320:t=q:w=1.1:g=1.0',
+                'equalizer=f=1100:t=q:w=1.2:g=0.7',
+                'equalizer=f=2400:t=q:w=1.1:g=0.8',
+                'equalizer=f=4300:t=q:w=1.0:g=-1.8',
+                'equalizer=f=5800:t=q:w=0.9:g=-3.2',
+                'equalizer=f=7000:t=q:w=0.8:g=-3.8',
+                *character_voice_filters(cue.get('tag', 'M_ADULT')),
+                'acompressor=threshold=-23dB:ratio=2.0:attack=14:release=190:makeup=1.15:knee=4',
+                f'atrim=0:{trim_seconds:.3f}',
+                'asetpts=PTS-STARTPTS',
+                f'afade=t=in:st=0:d={fade_in:.3f}',
+                f'afade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f}',
+                'alimiter=limit=0.94:attack=7:release=100',
                 f'adelay={start_ms}|{start_ms}[{label}]',
             ])
+
             filters.append(','.join(parts).replace('],', ']'))
             labels.append(f'[{label}]')
-
-            previous_end_ms = start_ms + int(rendered_seconds * 1000)
-            final_end_ms = max(final_end_ms, previous_end_ms, cue['end'])
+            final_end_ms = max(
+                final_end_ms,
+                start_ms + int(trim_seconds * 1000),
+                cue_end_ms,
+            )
 
         total = (final_end_ms + 350) / 1000.0
 
-        # normalize=0 is crucial: default amix divides volume by the number of
-        # subtitle clips and can make a long video almost inaudible.
+        # Master once after mixing. This avoids pumping and exaggerated breath
+        # noise caused by loud-normalizing every small clip independently.
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'alimiter=limit=0.92:attack=5:release=50,'
-              'loudnorm=I=-14:TP=-1.5:LRA=8,'
+              'acompressor=threshold=-18dB:ratio=1.55:attack=18:release=240:makeup=1.0:knee=5,'
+              'alimiter=limit=0.94:attack=8:release=150,'
+              'loudnorm=I=-16:TP=-1.5:LRA=7,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
@@ -1194,6 +1429,7 @@ def create_mp3(srt_text, progress_callback=None):
         command.extend([
             '-filter_complex', ';'.join(filters),
             '-map', '[out]',
+            '-c:a', 'libmp3lame',
             '-ac', '2',
             '-ar', '48000',
             '-b:a', '192k',
@@ -1205,9 +1441,10 @@ def create_mp3(srt_text, progress_callback=None):
 
         result = subprocess.run(command, capture_output=True, text=True, timeout=900)
         if result.returncode != 0:
-            raise RuntimeError(result.stderr[-1800:] or 'FFmpeg failed.')
+            raise RuntimeError(result.stderr[-2200:] or 'FFmpeg failed.')
         if not output.exists() or output.stat().st_size < 1000:
             raise RuntimeError('MP3 ត្រូវបានបង្កើត ប៉ុន្តែមិនមានសំឡេងគ្រប់គ្រាន់។')
+
         if progress_callback:
             progress_callback(100, "បង្កើត MP3 រួចរាល់")
         return output.read_bytes()
@@ -1221,6 +1458,7 @@ def create_mp3(srt_text, progress_callback=None):
 # ─────────────────────────────────────────────────────────────────────────────
 LICENSE_DB_PATH = Path(__file__).with_name("licenses.db")
 SESSION_COOKIE_NAME = "ai_khemra_bro_customer_session"
+LOGIN_COOKIE_NAME = "ai_khemra_bro_saved_login"
 SESSION_IDLE_MINUTES = 30
 LOGIN_WINDOW_MINUTES = 15
 MAX_LOGIN_ATTEMPTS = 5
@@ -1300,6 +1538,7 @@ def initialize_license_database():
         _ensure_column(connection, "licenses", "active_session_hash", "TEXT")
         _ensure_column(connection, "licenses", "active_session_last_seen", "TEXT")
         _ensure_column(connection, "licenses", "created_card_until", "TEXT")
+        _ensure_column(connection, "licenses", "saved_api_keys_encrypted", "TEXT")
         old_columns = {row["name"] for row in connection.execute("PRAGMA table_info(licenses)")}
         if "access_code" in old_columns:
             rows = connection.execute(
@@ -1453,6 +1692,40 @@ def _session_cookie_set(token):
 def _session_cookie_delete():
     try:
         cookie_manager.delete(SESSION_COOKIE_NAME, key="delete_customer_session_cookie")
+    except Exception:
+        pass
+
+
+def _saved_login_get():
+    """Return encrypted saved customer credentials for automatic login."""
+    try:
+        encrypted = cookie_manager.get(LOGIN_COOKIE_NAME)
+        if not encrypted:
+            return "", ""
+        payload = decrypt_api_keys(encrypted)
+        data = json.loads(payload)
+        return str(data.get("name", "")), str(data.get("code", ""))
+    except Exception:
+        return "", ""
+
+
+def _saved_login_set(name, code):
+    """Remember this customer's login on this browser until explicit logout."""
+    try:
+        payload = json.dumps({"name": str(name or ""), "code": str(code or "")}, ensure_ascii=False)
+        cookie_manager.set(
+            LOGIN_COOKIE_NAME,
+            encrypt_api_keys(payload),
+            expires_at=datetime.datetime.now() + datetime.timedelta(days=3650),
+            key="save_customer_login_cookie",
+        )
+    except Exception:
+        pass
+
+
+def _saved_login_delete():
+    try:
+        cookie_manager.delete(LOGIN_COOKIE_NAME, key="delete_customer_login_cookie")
     except Exception:
         pass
 
@@ -1627,6 +1900,7 @@ def public_login_screen():
             ok, message, row, token = validate_customer_login(name, code, existing, acquire_session=True)
             if ok:
                 _session_cookie_set(token)
+                _saved_login_set(row["customer_name"], row["access_code_display"])
                 st.session_state.customer_authenticated = True
                 st.session_state.customer_name = row["customer_name"]
                 st.session_state.customer_code = row["access_code_display"]
@@ -1775,6 +2049,23 @@ if st.session_state.get("admin_gate_visible", False) or st.session_state.get("ad
     st.stop()
 
 if not st.session_state.get("customer_authenticated", False):
+    # Restore login automatically after refresh, phone restart, or app update.
+    saved_name, saved_code = _saved_login_get()
+    if saved_code:
+        existing_token = _session_cookie_get()
+        auto_ok, _, auto_row, auto_token = validate_customer_login(
+            saved_name, saved_code, existing_token, acquire_session=False
+        )
+        if auto_ok:
+            _session_cookie_set(auto_token)
+            st.session_state.customer_authenticated = True
+            st.session_state.customer_name = auto_row["customer_name"]
+            st.session_state.customer_code = auto_row["access_code_display"]
+            st.session_state.customer_session_token = auto_token
+            st.rerun()
+        else:
+            _saved_login_delete()
+            _session_cookie_delete()
     public_login_screen()
     st.stop()
 
@@ -1824,7 +2115,7 @@ for state_key, default_value in {
 with st.container(key="api_menu_container"):
     with st.popover("☰", help="API Key និងការកំណត់កម្មវិធី"):
         st.markdown("### 🔑 API Key និងការកំណត់")
-        st.caption("ទូរសព្ទ/Browser នីមួយៗមាន Session, API Key, Upload, SRT និង MP3 ដាច់ដោយឡែកពីគ្នា។")
+        st.caption("API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នកក្នុង Database។ បិទទូរសព្ទ បិទ Safari ឬ Update/Restart កម្មវិធីក៏មិនបាត់ទេ។ វាបាត់តែពេលចុច «លុបសោ»។")
 
         st.text_area(
             "Gemini API Key",
@@ -1851,7 +2142,7 @@ with st.container(key="api_menu_container"):
 
         with logout_col:
             if st.button("🗑️ លុបសោ", key="remove_api_keys", use_container_width=True):
-                clear_private_user_session()
+                clear_private_user_session(delete_saved_api=True)
                 st.rerun()
 
         current_keys = [
@@ -1861,7 +2152,7 @@ with st.container(key="api_menu_container"):
         ]
         if current_keys:
             st.success(f"✅ API Key ត្រៀមប្រើ៖ {len(current_keys)} • Auto rotation")
-            st.caption("🔒 បានអ៊ិនគ្រីប និងរក្សាទុកជាប់សម្រាប់ Browser/ទូរសព្ទនេះ។ សោនឹងបាត់តែពេលអ្នកចុច «លុបសោ» ឬលុបទិន្នន័យ Browser ដោយខ្លួនឯង។")
+            st.caption("🔒 បានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នក។ បិទទូរសព្ទ ឬ Update កម្មវិធីក៏មិនបាត់ទេ។")
         else:
             st.info("បញ្ចូល API Key រួចចុច «រក្សាទុក»។")
 
@@ -2157,7 +2448,7 @@ with tab_video:
 
 with tab_translate:
     st.header("AI Subtitle Translator")
-    st.info("បិទភ្ជាប់ Chinese SRT ហើយបកប្រែទៅ Khmer SRT។")
+    st.info("បិទភ្ជាប់ Chinese SRT ហើយបកប្រែទៅ Khmer SRT ជាភាសាខ្មែរធម្មជាតិ ស្អាតសម្រាប់ទស្សនិកជនទូទៅ និងរក្សា timestamp ដើម។")
     source_srt = st.text_area("Chinese SRT", height=300, key="translator_source")
     if st.button("🌐 Translate to Khmer", key="translate_btn"):
         if not source_srt.strip():
@@ -2183,7 +2474,7 @@ with tab_translate:
                         cue_id = int(item.get("id"))
                         tag = str(item.get("tag", "M")).upper()
                         if tag not in VOICE_PROFILES:
-                            tag = "M"
+                            tag = "M_ADULT"
                         translated_map[cue_id] = {"tag": tag, "text": str(item.get("text", "")).strip()}
                 blocks = []
                 for cue in source_cues:
@@ -2203,7 +2494,7 @@ with tab_translate:
 with tab_srt_speech:
     st.header("SRT → Speech")
     speech_srt = st.text_area(
-        "Khmer SRT with [M] [F] [BOY] [GIRL] [OLD_M] [OLD_F] [M_THINK] [F_THINK]",
+        "Khmer SRT with [BOY] [GIRL] [M_YOUNG] [F_YOUNG] [M_ADULT] [F_ADULT] [M_OLD] [F_OLD] [M_THINK] [F_THINK] [NARRATOR_M] [NARRATOR_F]",
         height=360,
         key="speech_srt_input",
     )
@@ -2223,7 +2514,7 @@ with tab_text_speech:
     plain_text = st.text_area("Khmer Text", height=260, key="plain_text_input")
     voice_choice = st.selectbox(
         "Voice",
-        ["M", "F", "BOY", "GIRL", "OLD_M", "OLD_F", "M_THINK", "F_THINK"],
+        ["BOY", "GIRL", "M_YOUNG", "F_YOUNG", "M_ADULT", "F_ADULT", "M_OLD", "F_OLD", "M_THINK", "F_THINK", "NARRATOR_M", "NARRATOR_F"],
         key="plain_voice",
     )
     if st.button("🔊 Generate Voice", key="plain_voice_btn"):
