@@ -42,3 +42,12 @@ Keep the same secrets already used by your deployment. At minimum, configure the
 - Expiry is checked from the server-side license database on login and every Streamlit rerun.
 - Expired or disabled licenses are automatically blocked from using the app.
 - Renewal continues from the current expiry date when still active, or from the current date when already expired.
+
+
+## Version 3.2 — Locked API key and live private countdown
+- A live subscription countdown is shown only inside the signed-in customer's ☰ settings.
+- Countdown displays months, weeks, days, hours, minutes, and seconds.
+- Customer API-key deletion button was removed.
+- Only the Owner can delete a customer's saved API key from Admin.
+- The entire customer workspace is blocked until at least one Gemini API key is saved.
+- Saved API keys remain encrypted in the account database.
