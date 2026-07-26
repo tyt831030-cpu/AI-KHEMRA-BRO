@@ -3,6 +3,8 @@ import base64
 import datetime
 import hashlib
 import hmac
+import json
+import os
 import re
 import secrets
 import sqlite3
@@ -21,7 +23,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "4.1"
+APP_VERSION = "4.4"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -171,106 +173,19 @@ div[data-baseweb="popover"] [data-testid="stVerticalBlock"]{
   }
 }
 
-
-
-/* v4.1 — professional touch states, uploader card and iPhone scroll stability */
-html, body{
-  overscroll-behavior-y:none!important;
-  -webkit-text-size-adjust:100%;
-}
-[data-testid="stAppViewContainer"], .stApp{
-  overscroll-behavior-y:none!important;
-}
-[data-testid="stAppViewContainer"] > .main{
-  overscroll-behavior-y:contain!important;
-  -webkit-overflow-scrolling:touch!important;
-}
-/* Keep the page from rubber-banding downward on iPhone while preserving normal upward scrolling. */
-@supports (-webkit-touch-callout:none){
-  body{position:relative!important;min-height:100%!important}
-  [data-testid="stAppViewContainer"]{min-height:100dvh!important}
-}
-
-/* Every button has a clear idle, hover and pressed state. */
-.stButton>button,.stDownloadButton>button{
-  transition:transform .12s ease,filter .12s ease,box-shadow .12s ease,border-color .12s ease!important;
-  -webkit-tap-highlight-color:transparent!important;
-  touch-action:manipulation!important;
-}
-.stButton>button:not(:disabled),.stDownloadButton>button:not(:disabled){
-  box-shadow:0 6px 18px rgba(2,132,199,.20)!important;
-}
-.stButton>button:active,.stDownloadButton>button:active,
-.stButton>button[aria-pressed="true"]{
-  transform:translateY(2px) scale(.985)!important;
-  filter:brightness(.88)!important;
-  box-shadow:0 2px 7px rgba(2,132,199,.18)!important;
-  border:1px solid #a5f3fc!important;
-}
-.stButton>button:focus-visible,.stDownloadButton>button:focus-visible{
-  outline:3px solid rgba(34,211,238,.38)!important;
-  outline-offset:2px!important;
-}
-.stButton>button:disabled,.stDownloadButton>button:disabled{
-  background:#263244!important;color:#7f8b9d!important;
-  box-shadow:none!important;opacity:.72!important;
-}
-
-/* Professional upload area. */
-.upload-pro-card{
-  border:1px solid #2a3b52;border-radius:18px;padding:16px 16px 12px;margin:8px 0 10px;
-  background:linear-gradient(145deg,rgba(24,36,56,.96),rgba(10,17,28,.96));
-  box-shadow:0 12px 30px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.035);
-}
-.upload-pro-title{font-size:18px;font-weight:900;color:#f8fafc;margin-bottom:4px}
-.upload-pro-sub{font-size:13px;color:#9fb0c5;line-height:1.55}
-div[data-testid="stFileUploader"]{
-  border:1.5px dashed #38bdf8!important;
-  background:linear-gradient(145deg,#111d2f,#17253a)!important;
-  border-radius:16px!important;padding:12px!important;
-  box-shadow:inset 0 0 0 1px rgba(56,189,248,.08)!important;
-}
-div[data-testid="stFileUploader"] section{
-  background:transparent!important;border:0!important;min-height:132px!important;
-}
-div[data-testid="stFileUploader"] button{
-  width:auto!important;min-width:132px!important;border-radius:999px!important;
-}
-
-/* SRT workspace looks like a real editor. */
-.st-key-main_srt_editor{
-  border:1px solid #2b405a;border-radius:18px;padding:8px;
-  background:linear-gradient(145deg,#0d1624,#111c2d);
-  box-shadow:0 14px 34px rgba(0,0,0,.24);
-}
-.st-key-main_srt_editor textarea{
-  min-height:360px!important;border:0!important;box-shadow:none!important;
-  background:#162338!important;caret-color:#22d3ee!important;
-}
-
-/* Keep settings panel stable; it scrolls internally instead of pulling the whole iPhone page. */
-div[data-baseweb="popover"] [data-testid="stVerticalBlock"]{
-  max-height:min(82dvh,760px)!important;
-  overflow-y:auto!important;
-  overscroll-behavior-y:contain!important;
-  -webkit-overflow-scrolling:touch!important;
-}
-
-.thinking-card{
-  display:flex;align-items:center;gap:12px;padding:13px 15px;margin:10px 0;
-  border:1px solid #24405a;border-radius:14px;background:#0f1a2a;color:#dbeafe;
-}
-.thinking-brain{font-size:24px;animation:brainPulse 1.25s ease-in-out infinite}
-.thinking-dots span{display:inline-block;animation:dotBounce 1.2s infinite;opacity:.35}
-.thinking-dots span:nth-child(2){animation-delay:.18s}.thinking-dots span:nth-child(3){animation-delay:.36s}
-@keyframes brainPulse{50%{transform:scale(1.10);filter:drop-shadow(0 0 8px #22d3ee)}}
-@keyframes dotBounce{50%{transform:translateY(-4px);opacity:1}}
-
 /* One locked split control: a single 100% bar divided 50% / 50%. */
 html, body, [data-testid="stAppViewContainer"], .stApp{
   overflow-x:hidden!important;
   width:100%!important;
   max-width:100vw!important;
+  min-height:100%!important;
+  background:#080d15!important;
+}
+html,body{overscroll-behavior-y:none!important;}
+[data-testid="stAppViewContainer"]{min-height:100dvh!important;}
+@supports (-webkit-touch-callout:none){
+  body{min-height:-webkit-fill-available!important;}
+  .stApp{min-height:-webkit-fill-available!important;}
 }
 .block-container{
   width:100%!important;
@@ -1665,7 +1580,12 @@ def create_mp3(srt_text, progress_callback=None):
 # PRIVATE CUSTOMER LOGIN + HIDDEN OWNER LICENSE MANAGEMENT
 # This module adds security only. The original app UI/workflow below is unchanged.
 # ─────────────────────────────────────────────────────────────────────────────
-LICENSE_DB_PATH = Path(__file__).with_name("licenses.db")
+# Persistent data directory. On Railway/Render, set DATA_DIR to a mounted volume.
+# On Streamlit Community Cloud, local files can still be reset after redeploy, so
+# a managed database is recommended for true production persistence.
+_DATA_DIR = Path(os.getenv("DATA_DIR", str(Path(__file__).parent))).expanduser().resolve()
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+LICENSE_DB_PATH = _DATA_DIR / "licenses.db"
 SESSION_COOKIE_NAME = "ai_khemra_bro_customer_session"
 LOGIN_COOKIE_NAME = "ai_khemra_bro_saved_login"
 SESSION_IDLE_MINUTES = 30
@@ -1707,9 +1627,13 @@ def get_admin_password():
 
 
 def license_connection():
-    connection = sqlite3.connect(str(LICENSE_DB_PATH), timeout=30)
+    connection = sqlite3.connect(
+        str(LICENSE_DB_PATH), timeout=30, check_same_thread=False
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA synchronous=NORMAL")
+    connection.execute("PRAGMA temp_store=MEMORY")
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute("PRAGMA busy_timeout=30000")
     return connection
@@ -2456,14 +2380,19 @@ def admin_dashboard():
             st.caption(f"{log['event_at']} • {log['event_type']} • {log['actor']} • {log['details']}")
 
 
-initialize_license_database()
-# Compatibility cleanup: remove historical device/session locks created by older versions.
-with license_connection() as _lock_cleanup_connection:
-    _lock_cleanup_connection.execute(
-        "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL"
-    )
-    _lock_cleanup_connection.commit()
+try:
+    initialize_license_database()
+except Exception as startup_error:
+    st.error("កម្មវិធីមិនអាចបើក Database បាន។ សូមពិនិត្យ DATA_DIR ឬថាសផ្ទុកទិន្នន័យ។")
+    st.code(str(startup_error), language=None)
+    st.stop()
+
+# Do not clear customer sessions on every rerun. Older versions did this and could
+# cause login loops or blank screens on Safari. Multi-device access is already
+# supported by validate_customer_login(), so no device lock cleanup is needed.
 hidden_owner_trigger()
+# Safari-safe render marker: prevents an apparently empty page while components initialize.
+st.markdown('<div id="khbr-app-ready" style="height:1px;overflow:hidden;color:transparent">ready</div>', unsafe_allow_html=True)
 if st.session_state.get("admin_gate_visible", False) or st.session_state.get("admin_authenticated", False):
     admin_dashboard()
     st.stop()
@@ -2610,10 +2539,11 @@ lite_mode = st.session_state.lite_mode
 max_mb = 60 if lite_mode else 150
 
 if not valid_api_keys:
-    st.warning(
-        "🔐 មិនទាន់មាន Gemini API Key ទេ។ UI ទាំងមូលនៅតែបង្ហាញធម្មតា; "
-        "សូមចុច ☰ ដើម្បីរក្សាទុកសោ មុនចាប់ផ្ដើមបកប្រែ។"
+    st.error(
+        "🔐 កម្មវិធីមិនអាចដំណើរការបានទេ ព្រោះមិនទាន់មាន Gemini API Key។ "
+        "សូមចុចប៊ូតុង ☰ បញ្ចូល API Key ហើយចុច «រក្សាទុក API Key»។"
     )
+    st.stop()
 
 st.markdown(
     '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
@@ -2626,12 +2556,6 @@ tab_video, tab_translate, tab_srt_speech, tab_text_speech = st.tabs(
 
 with tab_video:
     st.markdown('<div class="section-title">1️⃣ Generate Subtitles (Khmer ខ្មែរ)</div>', unsafe_allow_html=True)
-
-    st.markdown(
-        '<div class="upload-pro-card"><div class="upload-pro-title">🎬 ដាក់វីដេអូរបស់អ្នក</div>'
-        '<div class="upload-pro-sub">ជ្រើស MP4, MOV, MKV ឬ WEBM • ឯកសារនឹងត្រូវរក្សាឯកជនក្នុងពេលដំណើរការ</div></div>',
-        unsafe_allow_html=True,
-    )
 
     uploaded_video = st.file_uploader(
         "Upload Video",
@@ -2695,11 +2619,8 @@ with tab_video:
 
                                 progress_bar.progress(percent)
                                 progress_text.markdown(
-                                    f'<div class="thinking-card"><div class="thinking-brain">🧠</div>'
-                                    f'<div><b>កំពុងស្តាប់ និងបកប្រែសំឡេង</b><br>'
-                                    f'<span style="color:#8fb4ce">{percent}% • {minutes:02d}:{seconds:02d}</span> '
-                                    f'<span class="thinking-dots"><span>●</span><span>●</span><span>●</span></span></div></div>',
-                                    unsafe_allow_html=True,
+                                    f"### ⏱️ {percent}%  •  "
+                                    f"{minutes:02d}:{seconds:02d}"
                                 )
                                 time.sleep(0.5)
 
@@ -2823,9 +2744,7 @@ with tab_video:
                     minutes, seconds = divmod(elapsed, 60)
                     progress_bar.progress(max(0, min(100, int(percent))))
                     progress_text.markdown(
-                        f'<div class="thinking-card"><div class="thinking-brain">🎙️</div>'
-                        f'<div><b>{message}</b><br><span style="color:#8fb4ce">{int(percent)}% • {minutes:02d}:{seconds:02d}</span> '
-                        f'<span class="thinking-dots"><span>●</span><span>●</span><span>●</span></span></div></div>',
+                        f"### ⏱️ {int(percent)}% • {minutes:02d}:{seconds:02d}<br>{message}",
                         unsafe_allow_html=True,
                     )
 
