@@ -36,18 +36,24 @@ Set the Streamlit main file path to `app.py`.
 ## Database note
 `licenses.db` is created automatically. Streamlit Community Cloud local files may reset after restart/redeploy. For long-term paid use, move licenses to Supabase/PostgreSQL.
 
-
-## Private Admin / License Setup
+## Security setup (required)
 
 Add these values in Streamlit Community Cloud → App settings → Secrets:
 
 ```toml
 ADMIN_USERNAME = "KHEMRA"
-ADMIN_PASSWORD = "0719067125"
-COOKIE_SECRET = "replace-with-a-long-random-private-secret"
+ADMIN_PASSWORD = "CHANGE_TO_YOUR_PRIVATE_PASSWORD"
+COOKIE_SECRET = "CHANGE_TO_A_LONG_RANDOM_SECRET"
+LICENSE_PEPPER = "CHANGE_TO_ANOTHER_LONG_RANDOM_SECRET"
 ```
 
-Owner access: click the small top-right ✦ control five times, then sign in.
-The original AI KHEMRA BRO workflow remains unchanged after customer login.
+Security included in `app.py`:
+- Hidden owner entry: click the top-right `✦` five times.
+- Customer name + access-code login.
+- 7-day, 30-day, and 1-year licenses.
+- One active session per license, with owner disconnect control.
+- Login rate limiting and audit log.
+- License renew, enable/disable, and protected delete confirmation.
+- Newly generated customer card remains visible for up to 24 hours; the license remains valid until its expiry date.
 
-License features: 7 days, 30 days, 365 days, combined Name + Code copy, 24-hour temporary new-code card, renew/disable/force-release, protected deletion, expiry checks, and one active session per license.
+Do not commit real passwords or secret values to GitHub.
