@@ -1,148 +1,1859 @@
+import asyncio
+import base64
+import datetime
+import hashlib
+import hmac
+import re
+import secrets
+import sqlite3
+import shutil
+import subprocess
+import tempfile
 import time
-import streamlit as st
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='expanded')
+import edge_tts
+import extra_streamlit_components as stx
+import streamlit as st
+from cryptography.fernet import Fernet, InvalidToken
+from google import genai
+from faster_whisper import WhisperModel
+
+st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
 st.markdown('''
 <style>
-.stApp{background:#0b0f17;color:#fff}.hero{background:linear-gradient(145deg,#15151f,#0f1118);border:2px solid #d100ff;border-radius:26px;padding:34px 24px;text-align:center;box-shadow:0 0 30px rgba(209,0,255,.18);margin-bottom:22px}.hero h1{font-size:clamp(32px,6vw,58px);margin:0 0 10px;font-weight:800}.hero p{color:#59d9ff;font-weight:800;letter-spacing:3px;font-size:clamp(13px,2.5vw,20px);margin:0}[data-testid="stSidebar"]{background:#111827;border-right:1px solid #253044}.profile-card{border:2px solid #57d8f5;border-radius:24px;padding:22px;text-align:center;background:#1d2533;margin-bottom:18px}.status-box{border-radius:16px;padding:18px;margin:12px 0 18px;font-size:18px;font-weight:600;background:#102239;border:1px solid #17355a}.success-box{border-radius:16px;padding:18px;margin:12px 0 18px;font-size:18px;background:#075f49;border:1px solid #15d6a1}.stButton>button{width:100%;border:0;border-radius:14px;min-height:54px;font-weight:800;font-size:17px;background:linear-gradient(90deg,#8e1bcc,#e200ff);color:white}.stDownloadButton>button{width:100%;border-radius:14px;min-height:50px;font-weight:700}div[data-testid="stFileUploader"]{background:#eff3f8;border-radius:16px;padding:10px}h1,h2,h3{color:#fff}.small-note{color:#a8b3c7;font-size:13px}
+:root{
+  --bg:#080d15;
+  --panel:#111827;
+  --panel2:#182438;
+  --text:#f8fafc;
+  --muted:#9ca3af;
+  --cyan:#38bdf8;
+  --ocean:#0284c7;
+  --ocean2:#22d3ee;
+  --pink:#38bdf8;
+}
+.stApp{background:var(--bg);color:var(--text)}
+.block-container{max-width:1180px;padding-top:.55rem;padding-bottom:3rem}
+[data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],#MainMenu,footer{display:none!important}
+
+.hero{
+  border:2px solid var(--ocean2);border-radius:24px;padding:34px 18px;
+  text-align:center;background:linear-gradient(145deg,#17171d,#0b1018);
+  box-shadow:0 0 24px rgba(34,211,238,.24);margin:0 0 18px;
+}
+.hero h1{font-size:44px;margin:0 0 8px;font-weight:900;white-space:nowrap;line-height:1.05}
+.hero p{margin:0;color:#23c8ef;font-weight:800;letter-spacing:1.5px}
+.section-title{font-size:30px;font-weight:900;margin:22px 0 10px}
+.ok{background:#073d31;border:1px solid #10b981;border-radius:14px;padding:13px 15px;margin:10px 0}
+.side-ok{background:#073d31;border:1px solid #10b981;border-radius:12px;padding:12px;margin:10px 0}
+.stButton>button{
+  width:100%;min-height:48px;border:0;border-radius:11px;color:white;
+  font-weight:850;font-size:15px;background:linear-gradient(90deg,#0284c7,#22d3ee)
+}
+.stButton>button:hover,.stDownloadButton>button:hover{
+  filter:brightness(1.08);transform:translateY(-1px);border-color:#a5f3fc!important;
+}
+.stDownloadButton>button{width:100%;min-height:46px;border:0!important;border-radius:11px!important;font-weight:850!important;color:white!important;background:linear-gradient(90deg,#0284c7,#22d3ee)!important;box-shadow:0 6px 18px rgba(2,132,199,.22)!important}
+.st-key-generate_srt, .st-key-generate_srt > div, .st-key-generate_srt button{width:100%!important;max-width:100%!important;display:block!important;box-sizing:border-box!important}
+div[data-testid="stFileUploader"]{background:#eef2f7;border-radius:12px;padding:8px}
+div[data-testid="stTextArea"] textarea{
+  background:#182438!important;color:#fff!important;border:1px solid #8290a4!important;
+  border-radius:10px!important;font-size:16px!important;line-height:1.65!important;
+  font-family:"Noto Sans Khmer","Khmer OS System",Arial,sans-serif!important
+}
+/* Beautiful mobile tab menu: all 4 tabs stay fully visible. */
+div[data-baseweb="tab-list"]{
+  gap:8px!important;
+  background:#0f1726!important;
+  border:1px solid #263349!important;
+  border-radius:14px!important;
+  padding:7px!important;
+  overflow:visible!important;
+}
+button[data-baseweb="tab"]{
+  background:#151f31!important;
+  border:1px solid #2b3950!important;
+  border-radius:10px!important;
+  padding:11px 13px!important;
+  min-height:46px!important;
+  color:#aeb8c7!important;
+  font-weight:800!important;
+  justify-content:center!important;
+  white-space:normal!important;
+  text-align:center!important;
+  line-height:1.2!important;
+}
+button[data-baseweb="tab"][aria-selected="true"]{
+  background:linear-gradient(90deg,#0284c7,#22d3ee)!important;
+  border-color:#67e8f9!important;
+  color:white!important;
+  box-shadow:0 5px 16px rgba(2,132,199,.28)!important;
+}
+.clear-wrap .stButton>button{
+  background:linear-gradient(90deg,#0369a1,#22d3ee);color:#ffffff;font-weight:900
+}
+
+/* One stable professional menu button: white 3-line icon on black. */
+.st-key-api_menu_container{
+  position:fixed!important;top:7px!important;left:7px!important;
+  z-index:1000000!important;width:44px!important;
+}
+.st-key-api_menu_container button{
+  width:44px!important;height:40px!important;min-height:40px!important;
+  padding:0!important;border-radius:11px!important;background:#050505!important;
+  border:1px solid #3f3f46!important;box-shadow:0 3px 12px rgba(0,0,0,.45)!important;
+  color:#fff!important;font-size:25px!important;font-weight:900!important;
+  line-height:1!important;white-space:nowrap!important;overflow:hidden!important;
+}
+.st-key-api_menu_container button:hover{
+  background:#111!important;border-color:#fff!important
+}
+div[data-baseweb="popover"]{
+  z-index:1000001!important;
+}
+div[data-baseweb="popover"] [data-testid="stVerticalBlock"]{
+  min-width:min(88vw,390px);
+}
+
+/* Discreet owner trigger. It looks like a decorative UI element. */
+.st-key-owner_trigger_container{
+  position:fixed!important;top:8px!important;right:8px!important;
+  z-index:1000000!important;width:42px!important;
+}
+.st-key-owner_trigger_container button{
+  width:42px!important;height:38px!important;min-height:38px!important;
+  padding:0!important;border-radius:12px!important;
+  background:rgba(8,13,21,.82)!important;border:1px solid #203247!important;
+  color:#38bdf8!important;font-size:19px!important;line-height:1!important;
+  box-shadow:0 3px 14px rgba(0,0,0,.38)!important;
+}
+.st-key-owner_trigger_container button:hover{
+  background:#0f172a!important;border-color:#22d3ee!important;
+}
+
+@media(max-width:700px){
+  .block-container{padding-left:.55rem!important;padding-right:.55rem!important;padding-top:.35rem!important}
+  .hero{padding:28px 8px 24px!important;border-radius:18px!important;margin-bottom:14px!important}
+  .hero h1{font-size:clamp(28px,9vw,42px)!important;letter-spacing:-1px!important}
+  .hero p{font-size:clamp(9px,2.7vw,12px)!important;letter-spacing:.8px!important;line-height:1.35!important}
+  .section-title{font-size:26px}
+  div[data-baseweb="tab-list"]{
+    display:grid!important;
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+    width:100%!important;
+    gap:7px!important;
+    padding:7px!important;
+  }
+  button[data-baseweb="tab"]{
+    width:100%!important;
+    min-width:0!important;
+    padding:10px 5px!important;
+    min-height:50px!important;
+    font-size:12px!important;
+  }
+  button[data-baseweb="tab"] p{
+    white-space:normal!important;
+    overflow:visible!important;
+    text-overflow:clip!important;
+    text-align:center!important;
+    line-height:1.25!important;
+  }
+  .st-key-api_menu_container{top:5px!important;left:5px!important;width:42px!important}
+  .st-key-api_menu_container button{
+    width:42px!important;height:38px!important;min-height:38px!important
+  }
+}
+
+/* One locked split control: a single 100% bar divided 50% / 50%. */
+html, body, [data-testid="stAppViewContainer"], .stApp{
+  overflow-x:hidden!important;
+  width:100%!important;
+  max-width:100vw!important;
+}
+.block-container{
+  width:100%!important;
+  max-width:1180px!important;
+  box-sizing:border-box!important;
+  overflow-x:hidden!important;
+}
+.st-key-srt_actions{
+  width:100%!important;
+  max-width:100%!important;
+  overflow:hidden!important;
+  margin:8px 0 0!important;
+  padding:0!important;
+  border-radius:13px!important;
+  background:#0ea5e9!important;
+  box-sizing:border-box!important;
+}
+.st-key-srt_actions div[data-testid="stHorizontalBlock"]{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;
+  column-gap:1px!important;
+  row-gap:0!important;
+  width:100%!important;
+  max-width:100%!important;
+  min-width:0!important;
+  margin:0!important;
+  padding:0!important;
+  overflow:hidden!important;
+  align-items:stretch!important;
+  box-sizing:border-box!important;
+}
+.st-key-srt_actions div[data-testid="column"],
+.st-key-srt_actions div[data-testid="stColumn"]{
+  flex:none!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  margin:0!important;
+  padding:0!important;
+  overflow:hidden!important;
+  box-sizing:border-box!important;
+}
+.st-key-srt_actions div[data-testid="column"] > div,
+.st-key-srt_actions div[data-testid="stColumn"] > div,
+.st-key-srt_actions .stButton,
+.st-key-srt_actions .stDownloadButton{
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  height:100%!important;
+  margin:0!important;
+  padding:0!important;
+  box-sizing:border-box!important;
+}
+.st-key-srt_actions button{
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  min-height:52px!important;
+  height:52px!important;
+  margin:0!important;
+  padding:5px 3px!important;
+  border:0!important;
+  border-radius:0!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  line-height:1.05!important;
+  font-size:clamp(10px,3vw,16px)!important;
+  box-sizing:border-box!important;
+  background:linear-gradient(90deg,#0284c7,#22d3ee)!important;
+}
+.st-key-srt_actions div[data-testid="column"]:first-child button,
+.st-key-srt_actions div[data-testid="stColumn"]:first-child button{
+  border-radius:12px 0 0 12px!important;
+}
+.st-key-srt_actions div[data-testid="column"]:last-child button,
+.st-key-srt_actions div[data-testid="stColumn"]:last-child button{
+  border-radius:0 12px 12px 0!important;
+}
+@media(max-width:430px){
+  [data-testid="stMainBlockContainer"], .block-container{
+    width:100%!important;
+    max-width:100%!important;
+    min-width:0!important;
+    overflow-x:hidden!important;
+  }
+  .st-key-srt_actions{
+    width:100%!important;
+    max-width:100%!important;
+    min-width:0!important;
+  }
+  .st-key-srt_actions button{
+    height:48px!important;
+    min-height:48px!important;
+    font-size:11px!important;
+    padding:4px 2px!important;
+  }
+}
+@media (orientation:landscape) and (max-height:600px){
+  .st-key-srt_actions button{height:46px!important;min-height:46px!important;font-size:12px!important}
+}
+
 </style>
 ''', unsafe_allow_html=True)
 
-for k, v in {'srt_text':'', 'generated_audio':False}.items():
-    st.session_state.setdefault(k, v)
+PISITH='km-KH-PisethNeural'
+SREYMOM='km-KH-SreymomNeural'
+VOICE_PROFILES={
+# Clear, social-media friendly levels. Pitch changes stay small to avoid robotic voices.
+'M':{'voice':PISITH,'rate':'-3%','pitch':'+0Hz','volume':'+12%'},
+'F':{'voice':SREYMOM,'rate':'-3%','pitch':'+0Hz','volume':'+12%'},
+'BOY':{'voice':PISITH,'rate':'-1%','pitch':'+6Hz','volume':'+13%'},
+'GIRL':{'voice':SREYMOM,'rate':'-1%','pitch':'+7Hz','volume':'+13%'},
+'OLD_M':{'voice':PISITH,'rate':'-7%','pitch':'-5Hz','volume':'+13%'},
+'OLD_F':{'voice':SREYMOM,'rate':'-7%','pitch':'-4Hz','volume':'+13%'},
+'M_THINK':{'voice':PISITH,'rate':'-6%','pitch':'-2Hz','volume':'+8%'},
+'F_THINK':{'voice':SREYMOM,'rate':'-6%','pitch':'-2Hz','volume':'+8%'},
+'NARRATOR_M':{'voice':PISITH,'rate':'-4%','pitch':'-1Hz','volume':'+14%'},
+'NARRATOR_F':{'voice':SREYMOM,'rate':'-4%','pitch':'-1Hz','volume':'+14%'}
+}
 
-with st.sidebar:
-    st.markdown('''<div class="profile-card"><h2>👋 somevut036</h2><div>ROLE: SOMEVUT036</div><div>🗓️ PLAN: 2027-06-30</div><div><b>⌛ 341 DAYS LEFT</b></div></div>''', unsafe_allow_html=True)
-    st.button('🚪 ចាកចេញ (Logout)')
-    st.markdown('---')
-    st.subheader('🌍 Target Language (ភាសាបកប្រែ)')
-    target_language = st.selectbox('ជ្រើសរើសភាសា (Select Language):', ['Khmer (ខ្មែរ)','English','Thai','Vietnamese'])
-    st.markdown('---')
-    st.subheader('🔑 API Keys Manager')
-    api_keys = st.text_area('Paste Gemini API Keys (One per line)', height=120)
-    valid_keys = [x.strip() for x in api_keys.splitlines() if x.strip()]
-    if valid_keys: st.success(f'✅ កំពុងប្រើប្រាស់ {len(valid_keys)} Keys')
-    st.markdown('---')
-    st.subheader('🎭 Translation Style')
-    st.radio('ជ្រើសរើសទម្រង់បកប្រែ:', ['Chinese Drama Pro (សម្រាប់រឿងចិន)','100% Audio Sync (កំណត់ពេលត្រូវគ្នា)','Standard (ការបកប្រែធម្មតា)'])
-    st.markdown('---')
-    st.subheader('⚙️ Audio Sync Mode')
-    st.radio('កែតម្រូវល្បឿន:', ['Speed Up Only (លឿន)','Speed Up & Slow Down (លឿន និង យឺត)'])
-    st.markdown('---')
-    st.subheader('🗣️ Voice Mode (របៀបសំឡេង)')
-    st.radio('កំណត់សម្រាប់ Tab 1 និង Tab 2:', ['Auto (ប្រុស/ស្រី តាម Tag)','All Male (ប្រុសសុទ្ធ)','All Female (ស្រីសុទ្ធ)'])
-    st.markdown('---')
-    st.subheader('🧠 AI Model (ម៉ូឌែល AI)')
-    st.selectbox('ជ្រើសរើសម៉ូឌែល (Select Model):', ['gemini-2.5-flash','gemini-2.5-pro','gemini-2.0-flash'])
+TRANSLATE_PROMPT = """You are an expert Khmer movie subtitler, Chinese-drama translator, dubbing script writer, and character-continuity editor.
+The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
+Use the uploaded video to identify the actual speaker, voice source, age, gender, social rank, relationship, narration, and inner thought.
 
-st.markdown('''<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>''', unsafe_allow_html=True)
+Return a JSON array only. Each object must contain exactly:
+{"id": integer, "tag": string, "text": string}
 
-tab1, tab2, tab3 = st.tabs(['🎬 AI Video Dubbing','🌐 AI SRT Translator','📜 Subtitle to Speech'])
+Allowed tags:
+M, F, BOY, GIRL, OLD_M, OLD_F, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
 
-with tab1:
-    st.header('1️⃣ Generate Subtitles (Khmer ខ្មែរ)')
+SPEAKER AND CHARACTER RULES:
+- Assign the tag to the person who is actually speaking, not merely the person visible on screen.
+- Keep each recurring character on a consistent gender/age/role tag across nearby cues.
+- Use M or F for normal audible dialogue, including calm, sad, angry, soft, romantic, or whispered speech.
+- Use M_THINK or F_THINK only for an unheard inner thought or internal monologue.
+- Use NARRATOR tags only for true off-screen narration, not for a character's thought.
+- Use BOY/GIRL and OLD_M/OLD_F only when the voice or visual context clearly supports it.
 
-    uploaded_video = st.file_uploader(
-        'Upload Video',
-        type=['mp4', 'mov', 'mkv', 'avi', 'webm']
+PROFESSIONAL KHMER TRANSLATION RULES:
+- Translate into natural spoken Khmer used by Cambodian people in real daily conversation.
+- Never translate word-for-word and never produce stiff, dry, book-like Khmer.
+- Preserve the original meaning, intention, emotion, humor, threat, sarcasm, romance, fear, grief, status, and relationship.
+- You may reorder, shorten, combine wording inside the same cue, or add a tiny natural connector when needed, but never change the meaning.
+- Choose pronouns and forms of address that fit age, gender, rank, relationship, and scene context, such as: បង/អូន, ខ្ញុំ/លោក, ឯង/អញ, ពួកម៉ាក, សម្លាញ់, លោកគ្រូ, សិស្ស, ព្រះអង្គ, អធិរាជ, ម្ចាស់, មេទ័ព, លោកតា, លោកយាយ.
+- Use natural Khmer emotion particles only when suitable, for example: ណា, ណ៎, ចា៎, ចុះ, អញ្ចឹង, ហ្នឹង, មែនទេ, វើយ, ហ្មង, ហាស, អូហ៍.
+- Do not overuse slang, insults, or particles. Match the actor's personality and the scene.
+- For historical, cultivation, martial-arts, palace, fantasy, or modern-drama terms, choose Khmer wording that viewers understand while keeping names and ranks consistent.
+- If a source phrase contains an idiom, joke, hidden meaning, or wordplay, recreate the intended effect naturally in Khmer instead of translating the literal words.
+- Do not leave Chinese characters, pinyin, English explanation, translator notes, or brackets inside the Khmer dialogue.
+
+EMOTION AND DUBBING RULES:
+- Write each line so that Khmer AI speech sounds smooth, emotional, and easy to pronounce.
+- Use punctuation naturally to guide pauses and breathing, but avoid excessive punctuation.
+- Make angry lines firm, sad lines gentle, romantic lines warm, fearful lines urgent, and comic lines lively.
+- Avoid awkward repeated words, robotic phrasing, and long formal constructions.
+
+SUBTITLE LENGTH RULES:
+- Each cue includes MAX_WORDS. The Khmer text MUST stay at or below that word limit.
+- Prefer one short, clear spoken sentence per cue.
+- Keep the core meaning and emotional force while removing unnecessary repetition and filler.
+- Never merge, split, omit, or renumber cues.
+
+OUTPUT RULES:
+- Return exactly one object for every supplied cue ID, in the same order.
+- Every text value must be fluent Khmer suitable for professional movie subtitles and dubbing.
+- JSON only. No markdown fences, headings, comments, or explanation.
+"""
+
+ANALYZE_PROMPT = """You are a Chinese-drama Khmer dubbing continuity editor.
+Review the supplied fixed-timestamp cues using the video context.
+Return a JSON array only with exactly:
+{"id": integer, "tag": string, "text": string}
+
+Allowed tags:
+M, F, BOY, GIRL, OLD_M, OLD_F, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
+
+Rules:
+- Return exactly one object per cue ID in the same order.
+- Do not alter timestamps, cue count, or cue order.
+- Keep recurring character identity and tag consistent across nearby cues.
+- Ordinary audible dialogue must remain M or F, even when calm, soft, sad, angry, or whispering.
+- Use THINK only for unheard internal monologue; use NARRATOR only for true narration.
+- Use BOY/GIRL and OLD_M/OLD_F only when age is clearly supported.
+- Rewrite Khmer into fluent, natural spoken Cambodian dialogue suitable for professional movie dubbing; never use stiff word-for-word phrasing.
+- Respect each cue's MAX_WORDS strictly so dubbing can play at a normal pace.
+- Preserve meaning and emotion but remove repeated, explanatory, or unnecessary words.
+- JSON only. No explanations or markdown.
+"""
+
+API_COOKIE_NAME = "ai_khemra_bro_private_api"
+COOKIE_SECRET_CONFIGURED = False
+
+try:
+    raw_cookie_secret = str(st.secrets.get("COOKIE_SECRET", "")).strip()
+except Exception:
+    raw_cookie_secret = ""
+
+if raw_cookie_secret:
+    COOKIE_SECRET_CONFIGURED = True
+else:
+    # Stable built-in fallback so an encrypted browser cookie can still be
+    # decrypted after refresh, browser close, phone restart, app redeploy, or
+    # server restart. For production, setting COOKIE_SECRET in Streamlit
+    # Secrets remains recommended, but persistence now works out of the box.
+    raw_cookie_secret = "AI-KHEMRA-BRO-PERSISTENT-PRIVATE-COOKIE-v1-2026"
+
+fernet_key = base64.urlsafe_b64encode(hashlib.sha256(raw_cookie_secret.encode("utf-8")).digest())
+api_cipher = Fernet(fernet_key)
+cookie_manager = stx.CookieManager(key="ai_khemra_private_cookie_manager")
+
+
+def encrypt_api_keys(api_keys_text):
+    cleaned = "\n".join(
+        line.strip() for line in api_keys_text.splitlines() if line.strip()
+    )
+    if not cleaned:
+        return ""
+    return api_cipher.encrypt(cleaned.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_api_keys(cookie_value):
+    if not cookie_value:
+        return ""
+    try:
+        return api_cipher.decrypt(str(cookie_value).encode("utf-8")).decode("utf-8")
+    except (InvalidToken, ValueError, TypeError):
+        return ""
+
+
+def load_private_api_keys():
+    """Read only this browser/device's encrypted API-key cookie."""
+    try:
+        return decrypt_api_keys(cookie_manager.get(API_COOKIE_NAME))
+    except Exception:
+        return ""
+
+
+def save_private_api_keys(api_keys_text):
+    """Persist encrypted API keys in this browser/device until Delete is pressed."""
+    cleaned = "\n".join(
+        line.strip() for line in api_keys_text.splitlines() if line.strip()
+    )
+    try:
+        if cleaned:
+            cookie_manager.set(
+                API_COOKIE_NAME,
+                encrypt_api_keys(cleaned),
+                expires_at=datetime.datetime.now() + datetime.timedelta(days=7300),
+                key="save_private_api_cookie",
+            )
+        else:
+            cookie_manager.delete(API_COOKIE_NAME, key="delete_private_api_cookie")
+    except Exception:
+        # Session state still keeps the key private for the active user session.
+        pass
+
+
+def api_keys_changed():
+    save_private_api_keys(st.session_state.get("api_keys_manager", ""))
+
+
+def clear_private_user_session():
+    """Remove only the current user's key and working files/state."""
+    try:
+        cookie_manager.delete(API_COOKIE_NAME, key="logout_private_api_cookie")
+    except Exception:
+        pass
+    for state_key in (
+        "api_keys_manager",
+        "srt_text",
+        "pending_srt",
+        "audio_bytes",
+        "pending_editor_update",
+        "audio_job_pending",
+    ):
+        if state_key in st.session_state:
+            del st.session_state[state_key]
+
+
+@st.cache_resource(show_spinner=False)
+def load_whisper_model():
+    # Base + int8 is selected so it can run on Streamlit Community Cloud CPU.
+    return WhisperModel("base", device="cpu", compute_type="int8")
+
+for key,value in {
+    'srt_text':'',
+    'pending_srt':'',
+    'audio_bytes':None,
+    'pending_editor_update':None,
+    'source_video_stem':'khmer_story',
+    'mp3_download_name':'khmer_story_dubbed',
+    'video_uploader_version':0,
+    'project_temp_files':[],
+}.items():
+    if key not in st.session_state:
+        st.session_state[key]=value
+
+def clean_srt(text):
+    text=re.sub(r'^```(?:srt)?\s*','',text.strip(),flags=re.I)
+    return re.sub(r'\s*```$','',text).strip()
+
+def safe_download_stem(value, fallback='khmer_story_dubbed'):
+    """Create a safe, user-editable filename without changing the audio data."""
+    name = Path(str(value or '')).stem.strip()
+    name = re.sub(r'[\\/:*?"<>|]+', '_', name)
+    name = re.sub(r'\s+', ' ', name).strip(' ._-')
+    return (name or fallback)[:100]
+
+def save_upload(uploaded_file):
+    """Save the received MP4 without making another full in-memory copy."""
+    suffix = Path(uploaded_file.name).suffix or '.mp4'
+    uploaded_file.seek(0)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+        shutil.copyfileobj(uploaded_file, temp, length=1024 * 1024)
+        temp.flush()
+        return Path(temp.name)
+
+def seconds_to_srt(value):
+    total_ms = max(0, int(round(float(value) * 1000)))
+    hours, rem = divmod(total_ms, 3_600_000)
+    minutes, rem = divmod(rem, 60_000)
+    seconds, millis = divmod(rem, 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def optimize_video_for_processing(source_path, output_path):
+    """Create a small 480p proxy to reduce server RAM, disk and Gemini upload size."""
+    result = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(source_path),
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale='min(480,iw)':-2,fps=12",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "32",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-ac", "1", "-ar", "16000", "-b:a", "32k",
+            "-movflags", "+faststart",
+            str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError(result.stderr[-1200:] or "មិនអាចបង្រួមវីដេអូបានទេ។")
+    return output_path
+
+
+def extract_audio(video_path, audio_path):
+    """Extract compact mono 16 kHz FLAC instead of a large uncompressed WAV."""
+    result = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(video_path),
+            "-vn", "-ac", "1", "-ar", "16000",
+            "-c:a", "flac", "-compression_level", "8", str(audio_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0 or not audio_path.exists():
+        raise RuntimeError(result.stderr[-1200:] or "មិនអាចទាញសំឡេងចេញពីវីដេអូបានទេ។")
+
+
+def transcribe_with_whisper(wav_path):
+    model = load_whisper_model()
+    segments, _ = model.transcribe(
+        str(wav_path),
+        language="zh",
+        beam_size=5,
+        vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 250},
+        condition_on_previous_text=True,
+        word_timestamps=False,
+    )
+    cues = []
+    last_end = 0.0
+    for segment in segments:
+        source = (segment.text or "").strip()
+        if not source:
+            continue
+        start = max(0.0, float(segment.start))
+        end = max(start + 0.18, float(segment.end))
+        # Remove tiny ASR overlaps while keeping the real Whisper timing.
+        if start < last_end and (last_end - start) < 0.35:
+            start = last_end
+        if end <= start:
+            end = start + 0.35
+        cues.append({
+            "id": len(cues) + 1,
+            "start": start,
+            "end": end,
+            "source": source,
+        })
+        last_end = end
+    if not cues:
+        raise RuntimeError("Whisper មិនបានរកឃើញសន្ទនាក្នុងវីដេអូនេះទេ។")
+    return cues
+
+
+def upload_for_context(client, video_path):
+    uploaded = client.files.upload(file=str(video_path))
+    for _ in range(120):
+        state = getattr(getattr(uploaded, "state", None), "name", "")
+        if state != "PROCESSING":
+            break
+        time.sleep(2)
+        uploaded = client.files.get(name=uploaded.name)
+    if getattr(getattr(uploaded, "state", None), "name", "") == "FAILED":
+        raise RuntimeError("AI មិនអាចអានវីដេអូនេះបានទេ។")
+    return uploaded
+
+
+def parse_json_array(raw_text):
+    import json
+    cleaned = (raw_text or "").strip()
+    cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\\s*```$", "", cleaned)
+    left, right = cleaned.find("["), cleaned.rfind("]")
+    if left == -1 or right == -1 or right <= left:
+        raise ValueError("AI មិនបានត្រឡប់ JSON ត្រឹមត្រូវ។")
+    value = json.loads(cleaned[left:right + 1])
+    if not isinstance(value, list):
+        raise ValueError("AI JSON មិនមែនជាបញ្ជី។")
+    return value
+
+
+def cue_word_limit(start, end):
+    """Conservative Khmer spoken-word budget for natural dubbing speed."""
+    duration = max(0.35, float(end) - float(start))
+    # Roughly 2.0 short Khmer words per second, with a small minimum.
+    return max(2, min(18, int(duration * 2.0 + 0.5)))
+
+
+def khmer_word_count(text):
+    return len([part for part in re.split(r"\s+", (text or "").strip()) if part])
+
+
+def contains_cjk(text):
+    return bool(re.search(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]", text or ""))
+
+
+def normalize_dialogue(text):
+    text = re.sub(r"```|<[^>]+>", "", str(text or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def repair_translation_items(client, model_name, uploaded_video, cues, items):
+    """Retry only missing or still-Chinese cues until every cue is usable Khmer."""
+    by_id = {cue["id"]: cue for cue in cues}
+    for _attempt in range(3):
+        bad_ids = [
+            cue["id"] for cue in cues
+            if cue["id"] not in items
+            or not normalize_dialogue(items[cue["id"]].get("text"))
+            or contains_cjk(items[cue["id"]].get("text"))
+        ]
+        if not bad_ids:
+            return items
+        for offset in range(0, len(bad_ids), 12):
+            group = [by_id[i] for i in bad_ids[offset:offset + 12]]
+            payload = "\n".join(
+                f'ID={cue["id"]} | MAX_WORDS={cue_word_limit(cue["start"], cue["end"])} | SOURCE={cue["source"]}'
+                for cue in group
+            )
+            prompt = TRANSLATE_PROMPT + "\nIMPORTANT: These cues failed before. Translate EVERY cue fully into Khmer. Never copy Chinese characters.\n\nCUES:\n" + payload
+            contents = [uploaded_video, prompt] if uploaded_video is not None else [prompt]
+            response = client.models.generate_content(model=model_name, contents=contents)
+            for row in parse_json_array(response.text or ""):
+                try:
+                    cue_id = int(row.get("id"))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if cue_id not in by_id:
+                    continue
+                tag = str(row.get("tag", "M")).upper().strip()
+                if tag not in VOICE_PROFILES:
+                    tag = items.get(cue_id, {}).get("tag", "M")
+                dialogue = normalize_dialogue(row.get("text"))
+                if dialogue and not contains_cjk(dialogue):
+                    items[cue_id] = {"tag": tag, "text": dialogue}
+    bad_ids = [cue["id"] for cue in cues if cue["id"] not in items or not items[cue["id"]].get("text") or contains_cjk(items[cue["id"]].get("text"))]
+    if bad_ids:
+        raise RuntimeError(f"AI បកប្រែមិនទាន់អស់។ បន្ទាត់មានបញ្ហា៖ {bad_ids[:20]}")
+    return items
+
+
+def refine_translated_cues(client, model_name, uploaded_video, cues, translated):
+    """Second pass for stable character tags and short normal-speed dialogue."""
+    refined = {}
+    batch_size = 35
+    for offset in range(0, len(cues), batch_size):
+        batch = cues[offset:offset + batch_size]
+        lines = []
+        for cue in batch:
+            item = translated[cue["id"]]
+            lines.append(
+                f'ID={cue["id"]} | TIME={seconds_to_srt(cue["start"])} --> '
+                f'{seconds_to_srt(cue["end"])} | MAX_WORDS={cue_word_limit(cue["start"], cue["end"])} '
+                f'| CURRENT_TAG={item["tag"]} | SOURCE={cue["source"]} | KHMER={item["text"]}'
+            )
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[uploaded_video, ANALYZE_PROMPT + "\n\nCUES:\n" + "\n".join(lines)],
+        )
+        for item in parse_json_array(response.text or ""):
+            try:
+                cue_id = int(item.get("id"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            tag = str(item.get("tag", "M")).upper().strip()
+            if tag not in VOICE_PROFILES:
+                tag = translated.get(cue_id, {}).get("tag", "M")
+            dialogue = str(item.get("text", "")).strip()
+            if dialogue:
+                refined[cue_id] = {"tag": tag, "text": dialogue}
+
+    for cue in cues:
+        refined.setdefault(cue["id"], translated[cue["id"]])
+    return refined
+
+
+def translate_cues(client, model_name, uploaded_video, cues):
+    result_by_id = {}
+    batch_size = 30
+    for offset in range(0, len(cues), batch_size):
+        batch = cues[offset:offset + batch_size]
+        cue_lines = "\n".join(
+            f"ID={cue['id']} | {seconds_to_srt(cue['start'])} --> "
+            f"{seconds_to_srt(cue['end'])} | MAX_WORDS={cue_word_limit(cue['start'], cue['end'])} "
+            f"| SOURCE={cue['source']}"
+            for cue in batch
+        )
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[uploaded_video, TRANSLATE_PROMPT + "\n\nCUES:\n" + cue_lines],
+        )
+        items = parse_json_array(response.text or "")
+        for item in items:
+            try:
+                cue_id = int(item.get("id"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            tag = str(item.get("tag", "M")).upper().strip()
+            if tag not in VOICE_PROFILES:
+                tag = "M"
+            translated = str(item.get("text", "")).strip()
+            if translated:
+                result_by_id[cue_id] = {"tag": tag, "text": translated}
+
+    return repair_translation_items(
+        client, model_name, uploaded_video, cues, result_by_id
     )
 
-    # ប៊ូតុង Generate នឹងបង្ហាញតែពេល Upload វីដេអូរួច
-    if uploaded_video is not None:
-        st.video(uploaded_video)
 
-        if st.button('🚀 Generate Subtitles (Sync 100%)', key='gen'):
-            p = st.progress(0)
-            box = st.empty()
+def build_srt(cues, translated):
+    blocks = []
+    for cue in cues:
+        item = translated[cue["id"]]
+        blocks.append(
+            f'{cue["id"]}\n'
+            f'{seconds_to_srt(cue["start"])} --> {seconds_to_srt(cue["end"])}\n'
+            f'[{item["tag"]}] {item["text"]}'
+        )
+    return "\n\n".join(blocks)
 
-            for pct, msg in [
-                (15, '⏳ Preparing video...'),
-                (35, '⏳ Analyzing audio waveforms...'),
-                (60, '🧠 Transcribing speech...'),
-                (82, f'🌐 Translating into {target_language}...'),
-                (100, '✅ SRT Generation Complete!')
-            ]:
-                box.markdown(
-                    f'<div class="status-box">{msg}</div>',
-                    unsafe_allow_html=True
+
+def is_quota_error(exc):
+    message = str(exc).upper()
+    return (
+        "429" in message
+        or "RESOURCE_EXHAUSTED" in message
+        or "QUOTA" in message
+        or "RATE LIMIT" in message
+    )
+
+
+def is_invalid_key_error(exc):
+    message = str(exc).upper()
+    return (
+        "API_KEY_INVALID" in message
+        or "INVALID API KEY" in message
+        or "API KEY NOT VALID" in message
+        or "PERMISSION_DENIED" in message
+    )
+
+
+def friendly_ai_error(exc, key_count=1):
+    if is_quota_error(exc):
+        if key_count > 1:
+            return (
+                "Gemini API Keys ដែលបានដាក់សុទ្ធតែដល់កម្រិតប្រើប្រាស់។ "
+                "សូមរង់ចាំ quota បើកឡើងវិញ ឬបន្ថែម API Key "
+                "ពី Google Cloud Project ផ្សេងក្នុងម៉ឺនុយ ☰។"
+            )
+        return (
+            "Gemini API Key នេះបានដល់កម្រិតប្រើប្រាស់ (429)។ "
+            "សូមរង់ចាំ quota បើកឡើងវិញ ឬដាក់ API Key "
+            "ពី Google Cloud Project ផ្សេងក្នុងម៉ឺនុយ ☰។"
+        )
+    if is_invalid_key_error(exc):
+        return "Gemini API Key មិនត្រឹមត្រូវ ឬមិនមានសិទ្ធិប្រើ។ សូមដាក់សោថ្មី ហើយចុច «រក្សាទុក»។"
+    message = re.sub(r"https?://\\S+", "", str(exc))
+    return f"AI មិនអាចបញ្ចប់ការបកប្រែបាន៖ {message[:420]}"
+
+
+def video_to_srt(video_path, api_keys, model):
+    """
+    Whisper creates timestamps once.
+    Gemini keys rotate automatically when a key has quota/rate-limit problems.
+    The normal path uses one translation pass plus targeted repair only,
+    reducing Gemini requests compared with the previous three-pass workflow.
+    """
+    if isinstance(api_keys, str):
+        api_keys = [api_keys]
+    api_keys = [str(key).strip() for key in api_keys if str(key).strip()]
+    if not api_keys:
+        raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
+
+    with tempfile.TemporaryDirectory() as folder:
+        folder_path = Path(folder)
+        proxy_path = folder_path / "video_proxy_480p.mp4"
+        audio_path = folder_path / "audio_16k.flac"
+
+        # Convert the large MP4 into a small processing copy. The original file
+        # is used only as a fallback when FFmpeg cannot create the proxy.
+        processing_video = Path(video_path)
+        try:
+            processing_video = optimize_video_for_processing(video_path, proxy_path)
+        except Exception:
+            processing_video = Path(video_path)
+
+        extract_audio(processing_video, audio_path)
+        cues = transcribe_with_whisper(audio_path)
+        if not cues:
+            raise RuntimeError("Whisper មិនរកឃើញសំឡេងនិយាយក្នុងវីដេអូនេះទេ។")
+
+        last_error = None
+
+        for api_key in api_keys:
+            try:
+                client = genai.Client(api_key=api_key)
+                uploaded_video = upload_for_context(client, processing_video)
+
+                # One main translation pass. translate_cues already repairs
+                # missing/Chinese cues, so the old extra full refinement pass
+                # is skipped to conserve free-tier requests.
+                translated = translate_cues(
+                    client, model, uploaded_video, cues
                 )
-                p.progress(pct)
-                time.sleep(.3)
+                translated = repair_translation_items(
+                    client, model, uploaded_video, cues, translated
+                )
 
-            st.session_state.srt_text = '''1
-00:00:00,195 --> 00:00:02,500
-[M] ក្រោកឡើង! ពេលនេះយើងត្រូវចេញដំណើរហើយ។
+                result = build_srt(cues, translated)
+                if "-->" not in result:
+                    raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
+                return result
 
-2
-00:00:03,209 --> 00:00:06,500
-[M] ទោះបីជាមានឧបសគ្គយ៉ាងណា ក៏យើងមិនអាចបោះបង់បានទេ។
+            except Exception as exc:
+                last_error = exc
+                if is_quota_error(exc) or is_invalid_key_error(exc):
+                    # Try the next API key saved by this user.
+                    continue
+                raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
 
-3
-00:00:09,324 --> 00:00:13,500
-[F] ខ្ញុំជឿថា ប្រសិនបើយើងរួមដៃគ្នា យើងនឹងអាចឈ្នះបាន។
-'''
-            box.markdown(
-                '<div class="success-box">✅ SRT Generation Complete!</div>',
-                unsafe_allow_html=True
+        raise RuntimeError(friendly_ai_error(last_error, len(api_keys)))
+
+
+def srt_to_structured_cues(srt_text):
+    parsed = parse_srt(srt_text)
+    return [
+        {
+            "id": index,
+            "start_ms": cue["start"],
+            "end_ms": cue["end"],
+            "tag": cue["tag"],
+            "text": cue["text"],
+        }
+        for index, cue in enumerate(parsed, start=1)
+    ]
+
+
+def ms_to_srt(value):
+    return seconds_to_srt(value / 1000.0)
+
+
+def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
+    cues = srt_to_structured_cues(srt_text)
+    if not cues:
+        raise ValueError("រកមិនឃើញ SRT ត្រឹមត្រូវទេ។")
+    client = genai.Client(api_key=api_key)
+    context = upload_for_context(client, video_path) if video_path else None
+    updated = {}
+    batch_size = 35
+    for offset in range(0, len(cues), batch_size):
+        batch = cues[offset:offset + batch_size]
+        payload = "\n".join(
+            f'ID={cue["id"]} | TIME={ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])} '
+            f'| MAX_WORDS={cue_word_limit(cue["start_ms"] / 1000.0, cue["end_ms"] / 1000.0)} '
+            f'| TAG={cue["tag"]} | TEXT={cue["text"]}'
+            for cue in batch
+        )
+        contents = [ANALYZE_PROMPT + "\n\nCUES:\n" + payload]
+        if context is not None:
+            contents.insert(0, context)
+        response = client.models.generate_content(model=model_name, contents=contents)
+        for item in parse_json_array(response.text or ""):
+            try:
+                cue_id = int(item.get("id"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            tag = str(item.get("tag", "M")).upper().strip()
+            if tag not in VOICE_PROFILES:
+                tag = "M"
+            dialogue = str(item.get("text", "")).strip()
+            if dialogue:
+                updated[cue_id] = {"tag": tag, "text": dialogue}
+
+    blocks = []
+    for cue in cues:
+        item = updated.get(cue["id"], {"tag": cue["tag"], "text": cue["text"]})
+        blocks.append(
+            f'{cue["id"]}\n{ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])}\n'
+            f'[{item["tag"]}] {item["text"]}'
+        )
+    return "\n\n".join(blocks)
+
+def parse_srt(srt_text):
+    time_re=re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
+    tag_re=re.compile(r'^\[(M|F|BOY|GIRL|OLD_M|OLD_F|M_THINK|F_THINK|NARRATOR_M|NARRATOR_F)\]\s*',re.I)
+    def to_ms(v):
+        h,m,s,ms=map(int,v); return ((h*60+m)*60+s)*1000+ms
+    cues=[]
+    for block in re.split(r'\n\s*\n',srt_text.strip()):
+        lines=[x.strip() for x in block.splitlines() if x.strip()]
+        idx=next((i for i,x in enumerate(lines) if '-->' in x),None)
+        if idx is None or idx+1>=len(lines): continue
+        match=time_re.search(lines[idx])
+        if not match: continue
+        dialogue=' '.join(lines[idx+1:]).strip(); tag_match=tag_re.match(dialogue)
+        tag=tag_match.group(1).upper() if tag_match else 'M'
+        if tag_match: dialogue=dialogue[tag_match.end():].strip()
+        if dialogue:
+            start_ms=to_ms(match.groups()[:4]); end_ms=to_ms(match.groups()[4:])
+            if end_ms <= start_ms: end_ms = start_ms + 350
+            cues.append({'start':start_ms,'end':end_ms,'tag':tag,'text':dialogue})
+    return cues
+
+def run_async(coro):
+    loop=asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop); return loop.run_until_complete(coro)
+    finally:
+        loop.close(); asyncio.set_event_loop(None)
+
+async def synthesize(text, profile, output_path):
+    clean_text = normalize_dialogue(text)
+    if not clean_text:
+        raise ValueError('មានបន្ទាត់ SRT ទទេ។')
+    last_error = None
+    attempts = [
+        profile,
+        {**profile, 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+0%'},
+        {'voice': profile.get('voice', PISITH), 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+0%'},
+    ]
+    for current in attempts:
+        try:
+            await edge_tts.Communicate(
+                text=clean_text, voice=current['voice'], rate=current['rate'],
+                pitch=current['pitch'], volume=current['volume']
+            ).save(str(output_path))
+            if output_path.exists() and output_path.stat().st_size > 500:
+                return
+        except Exception as exc:
+            last_error = exc
+            await asyncio.sleep(0.8)
+    raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
+
+def probe_audio_duration(path):
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr[-500:] or "FFprobe failed.")
+    return max(0.01, float(result.stdout.strip()))
+
+
+def atempo_chain(speed):
+    """Build a valid FFmpeg atempo chain for speed factors above 1."""
+    factors = []
+    remaining = max(1.0, float(speed))
+    while remaining > 2.0:
+        factors.append(2.0)
+        remaining /= 2.0
+    if remaining > 1.001:
+        factors.append(remaining)
+    return ",".join(f"atempo={value:.5f}" for value in factors)
+
+
+def create_mp3(srt_text, progress_callback=None):
+    cues = parse_srt(srt_text)
+    if not cues:
+        raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
+    chinese_rows = [i + 1 for i, cue in enumerate(cues) if contains_cjk(cue['text'])]
+    if chinese_rows:
+        raise ValueError(f'SRT នៅមានអក្សរចិននៅបន្ទាត់៖ {chinese_rows[:20]}។ សូម Generate SRT ឡើងវិញ។')
+
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        clips = []
+        clip_durations = []
+
+        total_cues = len(cues)
+        if progress_callback:
+            progress_callback(2, "កំពុងរៀបចំសំឡេងតួអង្គ…")
+
+        for index, cue in enumerate(cues):
+            clip = root / f'clip_{index:04d}.mp3'
+            profile = VOICE_PROFILES.get(cue['tag'], VOICE_PROFILES['M'])
+            run_async(synthesize(cue['text'], profile, clip))
+            clips.append(clip)
+            clip_durations.append(probe_audio_duration(clip))
+            if progress_callback:
+                percent = 5 + int(((index + 1) / total_cues) * 82)
+                progress_callback(
+                    min(percent, 87),
+                    f"កំពុងបង្កើតសំឡេងខ្មែរ {index + 1}/{total_cues}…",
+                )
+
+        command = ['ffmpeg', '-y']
+        for clip in clips:
+            command.extend(['-i', str(clip)])
+
+        filters = []
+        labels = []
+        final_end_ms = 0
+        previous_end_ms = 0
+
+        for index, cue in enumerate(cues):
+            slot_seconds = max(0.25, (cue['end'] - cue['start']) / 1000.0)
+            audio_seconds = clip_durations[index]
+
+            # Never allow two generated voices to talk over each other.
+            # A cue starts at its timestamp, or immediately after the previous
+            # voice finishes when the source timestamps overlap.
+            start_ms = max(0, cue['start'], previous_end_ms + (40 if index else 0))
+
+            # Fit only moderately. Extreme acceleration sounds robotic.
+            speed = audio_seconds / slot_seconds
+            tempo = ''
+            rendered_seconds = audio_seconds
+            if speed > 1.04:
+                safe_speed = min(speed, 1.32)
+                tempo = atempo_chain(safe_speed)
+                rendered_seconds = audio_seconds / safe_speed
+
+            label = f'a{index}'
+            parts = [f'[{index}:a]asetpts=PTS-STARTPTS']
+            if tempo:
+                parts.append(tempo)
+
+            # Normalize every voice clip before mixing so quiet narration and
+            # thought voices remain clearly audible.
+            parts.extend([
+                'highpass=f=70',
+                'lowpass=f=14500',
+                'loudnorm=I=-16:TP=-2:LRA=7',
+                'acompressor=threshold=-20dB:ratio=2.5:attack=8:release=100:makeup=2',
+                'afade=t=in:st=0:d=0.025',
+                f'afade=t=out:st={max(0.02, rendered_seconds-0.04):.3f}:d=0.04',
+                f'adelay={start_ms}|{start_ms}[{label}]',
+            ])
+            filters.append(','.join(parts).replace('],', ']'))
+            labels.append(f'[{label}]')
+
+            previous_end_ms = start_ms + int(rendered_seconds * 1000)
+            final_end_ms = max(final_end_ms, previous_end_ms, cue['end'])
+
+        total = (final_end_ms + 350) / 1000.0
+
+        # normalize=0 is crucial: default amix divides volume by the number of
+        # subtitle clips and can make a long video almost inaudible.
+        filters.append(
+            ''.join(labels)
+            + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
+              'alimiter=limit=0.92:attack=5:release=50,'
+              'loudnorm=I=-14:TP=-1.5:LRA=8,'
+              f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
+        )
+
+        output = root / 'khmer_dubbed.mp3'
+        command.extend([
+            '-filter_complex', ';'.join(filters),
+            '-map', '[out]',
+            '-ac', '2',
+            '-ar', '48000',
+            '-b:a', '192k',
+            str(output),
+        ])
+
+        if progress_callback:
+            progress_callback(92, "កំពុងបញ្ចូលសំឡេងទាំងអស់ជាបទ MP3 តែមួយ…")
+
+        result = subprocess.run(command, capture_output=True, text=True, timeout=900)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr[-1800:] or 'FFmpeg failed.')
+        if not output.exists() or output.stat().st_size < 1000:
+            raise RuntimeError('MP3 ត្រូវបានបង្កើត ប៉ុន្តែមិនមានសំឡេងគ្រប់គ្រាន់។')
+        if progress_callback:
+            progress_callback(100, "បង្កើត MP3 រួចរាល់")
+        return output.read_bytes()
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PRIVATE CUSTOMER LOGIN + HIDDEN ADMIN LICENSE MANAGEMENT
+# Customer page: normal app URL
+# Admin page: add ?admin=1 to the app URL (not shown in the public menu)
+# ─────────────────────────────────────────────────────────────────────────────
+LICENSE_DB_PATH = Path(__file__).with_name("licenses.db")
+
+
+def get_admin_username():
+    """Read the private owner name from Streamlit Secrets."""
+    try:
+        value = str(st.secrets.get("ADMIN_USERNAME", "")).strip()
+    except Exception:
+        value = ""
+    return value or "KHEMRA"
+
+
+def get_admin_password():
+    """Read the private owner password from Streamlit Secrets."""
+    try:
+        value = str(st.secrets.get("ADMIN_PASSWORD", "")).strip()
+    except Exception:
+        value = ""
+    # Immediate owner fallback requested by the app owner. For stronger
+    # security, override it in Streamlit Secrets before sharing source code.
+    return value or "0719067125"
+
+
+def license_connection():
+    connection = sqlite3.connect(str(LICENSE_DB_PATH), timeout=20)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def initialize_license_database():
+    with license_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS licenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_name TEXT NOT NULL,
+                access_code TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_login_at TEXT,
+                login_count INTEGER NOT NULL DEFAULT 0
             )
-    else:
-        st.info('📤 សូម Upload វីដេអូជាមុនសិន។')
-
-    # SRT Editor នឹងបង្ហាញតែពេលមាន SRT
-    if st.session_state.srt_text:
-        st.subheader('Generated SRT from Video')
-        st.session_state.srt_text = st.text_area(
-            'កែសម្រួល SRT នៅទីនេះ:',
-            value=st.session_state.srt_text,
-            height=420
+            """
         )
+        connection.commit()
 
-        st.download_button(
-            '⬇️ Download SRT',
-            st.session_state.srt_text.encode('utf-8'),
-            'generated_khmer.srt',
-            'application/x-subrip'
+
+def normalize_customer_name(value):
+    return " ".join(str(value or "").strip().split())[:80]
+
+
+def normalize_access_code(value):
+    return re.sub(r"[^A-Z0-9-]", "", str(value or "").strip().upper())[:40]
+
+
+def create_access_code(duration_days):
+    prefix = "7D" if duration_days == 7 else "30D" if duration_days == 30 else "1Y"
+    while True:
+        code = f"KHBR-{prefix}-{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
+        with license_connection() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM licenses WHERE access_code = ?", (code,)
+            ).fetchone()
+        if not exists:
+            return code
+
+
+def add_license(customer_name, duration_days):
+    name = normalize_customer_name(customer_name)
+    if not name:
+        raise ValueError("សូមបញ្ចូលឈ្មោះអតិថិជន។")
+    now = datetime.datetime.now()
+    expires = now + datetime.timedelta(days=int(duration_days))
+    code = create_access_code(int(duration_days))
+    with license_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO licenses
+            (customer_name, access_code, created_at, expires_at, is_active)
+            VALUES (?, ?, ?, ?, 1)
+            """,
+            (name, code, now.isoformat(timespec="seconds"), expires.isoformat(timespec="seconds")),
         )
+        connection.commit()
+    return code, expires
 
-        st.markdown('---')
-        st.header('2️⃣ AI Dubbing (Edge TTS Studio)')
 
-        if st.button('🎙️ Generate Dubbed Audio (MP3)', key='audio'):
-            with st.spinner('កំពុងបង្កើតសំឡេងខ្មែរ...'):
-                time.sleep(1)
-            st.session_state.generated_audio = True
-            st.success(
-                '✅ Audio workflow is ready. '
-                'Connect Edge TTS logic to export the real MP3.'
-            )
-
-    # Download/Status នឹងបង្ហាញតែពេល Audio រួច
-    if st.session_state.generated_audio:
-        st.info(
-            'UI បានត្រៀមរួច។ '
-            'ផ្នែកនេះជាកន្លែងភ្ជាប់ Edge TTS សម្រាប់បង្កើត MP3 ពិត។'
+def validate_customer_login(customer_name, access_code):
+    name = normalize_customer_name(customer_name)
+    code = normalize_access_code(access_code)
+    if not name or not code:
+        return False, "សូមបញ្ចូលឈ្មោះ និងលេខកូដ។", None
+    with license_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM licenses WHERE access_code = ?", (code,)
+        ).fetchone()
+        if row is None:
+            return False, "លេខកូដមិនត្រឹមត្រូវ។", None
+        if normalize_customer_name(row["customer_name"]).casefold() != name.casefold():
+            return False, "ឈ្មោះមិនត្រូវនឹងលេខកូដនេះ។", None
+        if not bool(row["is_active"]):
+            return False, "លេខកូដនេះត្រូវបាន Admin បិទ។", None
+        expires_at = datetime.datetime.fromisoformat(row["expires_at"])
+        if datetime.datetime.now() >= expires_at:
+            return False, "លេខកូដរបស់អ្នកបានផុតកំណត់។ សូមទាក់ទង Admin។", None
+        connection.execute(
+            """
+            UPDATE licenses
+            SET last_login_at = ?, login_count = login_count + 1
+            WHERE id = ?
+            """,
+            (datetime.datetime.now().isoformat(timespec="seconds"), row["id"]),
         )
+        connection.commit()
+    return True, "", dict(row)
 
-    # Clear បង្ហាញតែពេលមាន Project
-    if uploaded_video is not None or st.session_state.srt_text:
-        if st.button('🗑️ សម្អាត (Clear Video Project)', key='clear'):
-            st.session_state.srt_text = ''
-            st.session_state.generated_audio = False
+
+def license_rows():
+    with license_connection() as connection:
+        return connection.execute(
+            "SELECT * FROM licenses ORDER BY id DESC"
+        ).fetchall()
+
+
+def update_license_status(license_id, active):
+    with license_connection() as connection:
+        connection.execute(
+            "UPDATE licenses SET is_active = ? WHERE id = ?",
+            (1 if active else 0, int(license_id)),
+        )
+        connection.commit()
+
+
+def renew_license(license_id, extra_days):
+    with license_connection() as connection:
+        row = connection.execute(
+            "SELECT expires_at FROM licenses WHERE id = ?", (int(license_id),)
+        ).fetchone()
+        if row is None:
+            return
+        old_expiry = datetime.datetime.fromisoformat(row["expires_at"])
+        base = max(old_expiry, datetime.datetime.now())
+        new_expiry = base + datetime.timedelta(days=int(extra_days))
+        connection.execute(
+            "UPDATE licenses SET expires_at = ?, is_active = 1 WHERE id = ?",
+            (new_expiry.isoformat(timespec="seconds"), int(license_id)),
+        )
+        connection.commit()
+
+
+def delete_license(license_id):
+    with license_connection() as connection:
+        connection.execute("DELETE FROM licenses WHERE id = ?", (int(license_id),))
+        connection.commit()
+
+
+def hidden_owner_trigger():
+    """Open the private Admin gate only after five consecutive clicks."""
+    if "owner_click_count" not in st.session_state:
+        st.session_state.owner_click_count = 0
+    if "admin_gate_visible" not in st.session_state:
+        st.session_state.admin_gate_visible = False
+
+    with st.container(key="owner_trigger_container"):
+        clicked = st.button("✦", key="owner_trigger", help="AI KHEMRA BRO")
+    if clicked:
+        st.session_state.owner_click_count += 1
+        if st.session_state.owner_click_count >= 5:
+            st.session_state.owner_click_count = 0
+            st.session_state.admin_gate_visible = True
             st.rerun()
 
-with tab2:
-    st.header('🌐 AI SRT Translator')
-    src=st.text_area('Paste original SRT', height=320)
-    if st.button('🌐 Translate SRT', key='tr'):
-        st.success('✅ Translation UI is ready. Connect Gemini API logic here.') if src.strip() else st.warning('សូមបញ្ចូល SRT ជាមុនសិន។')
-    st.text_area('Translated SRT', height=320)
 
-with tab3:
-    st.header('📜 Subtitle to Speech')
-    speech=st.text_area('Paste Khmer SRT with [M] / [F] tags', height=360)
-    st.selectbox('Male Voice',['km-KH-PisethNeural']); st.selectbox('Female Voice',['km-KH-SreymomNeural'])
-    if st.button('🎧 Create Speech Audio', key='speech'):
-        st.success('✅ Speech generation UI is ready for Edge TTS integration.') if speech.strip() else st.warning('សូមបញ្ចូល SRT ជាមុនសិន។')
+def public_login_screen():
+    st.markdown(
+        '<div class="hero"><h1>AI KHEMRA BRO</h1><p>PRIVATE CUSTOMER ACCESS</p></div>',
+        unsafe_allow_html=True,
+    )
+    left, center, right = st.columns([1, 1.25, 1])
+    with center:
+        st.markdown("### 🔐 ចូលប្រើកម្មវិធី")
+        with st.form("customer_login_form", clear_on_submit=False):
+            name = st.text_input("ទី 1៖ ឈ្មោះអ្នកប្រើ", placeholder="បញ្ចូលឈ្មោះដែល Admin បានចុះឈ្មោះ")
+            code = st.text_input("ទី 2៖ លេខកូដ", placeholder="KHBR-...", type="password")
+            submitted = st.form_submit_button("ចូលប្រើកម្មវិធី", use_container_width=True)
+        if submitted:
+            ok, message, row = validate_customer_login(name, code)
+            if ok:
+                st.session_state.customer_authenticated = True
+                st.session_state.customer_name = row["customer_name"]
+                st.session_state.customer_code = row["access_code"]
+                st.session_state.customer_expires_at = row["expires_at"]
+                st.rerun()
+            else:
+                st.error(message)
+        st.caption("សូមទាក់ទង Admin ដើម្បីទទួលលេខកូដ ឬបន្តថ្ងៃផុតកំណត់។")
 
-st.markdown('<p class="small-note">AI-KHEMRA-BRO • Mobile-first Streamlit interface</p>', unsafe_allow_html=True)
+
+def admin_dashboard():
+    st.markdown(
+        '<div class="hero"><h1>AI KHEMRA BRO</h1><p>PRIVATE ADMIN MANAGEMENT</p></div>',
+        unsafe_allow_html=True,
+    )
+    if not st.session_state.get("admin_authenticated", False):
+        left, center, right = st.columns([1, 1.25, 1])
+        with center:
+            st.markdown("### 👑 ម្ចាស់កម្មវិធី")
+            with st.form("admin_login_form"):
+                username = st.text_input("ឈ្មោះម្ចាស់", autocomplete="off")
+                password = st.text_input("លេខសម្ងាត់", type="password", autocomplete="off")
+                submitted = st.form_submit_button("ចូលគ្រប់គ្រង", use_container_width=True)
+            if submitted:
+                name_ok = hmac.compare_digest(username.strip().casefold(), get_admin_username().casefold())
+                pass_ok = hmac.compare_digest(password.strip(), get_admin_password())
+                if name_ok and pass_ok:
+                    st.session_state.admin_authenticated = True
+                    st.session_state.admin_gate_visible = True
+                    st.rerun()
+                else:
+                    st.error("ឈ្មោះ ឬលេខសម្ងាត់មិនត្រឹមត្រូវ។")
+            if st.button("← ត្រឡប់ទៅផ្ទាំងចូលប្រើ", key="close_admin_gate", use_container_width=True):
+                st.session_state.admin_gate_visible = False
+                st.session_state.owner_click_count = 0
+                st.rerun()
+        return
+
+    top1, top2 = st.columns([4, 1])
+    with top1:
+        st.success("👑 Admin បានចូលរួច")
+    with top2:
+        if st.button("ចាកចេញ", key="admin_logout", use_container_width=True):
+            st.session_state.admin_authenticated = False
+            st.session_state.admin_gate_visible = False
+            st.session_state.owner_click_count = 0
+            st.rerun()
+
+    st.markdown("## ➕ បង្កើតលេខកូដថ្មី")
+    with st.form("create_license_form", clear_on_submit=True):
+        customer_name = st.text_input("ឈ្មោះអតិថិជន")
+        duration_label = st.selectbox("រយៈពេល", ["7 ថ្ងៃ", "1 ខែ (30 ថ្ងៃ)", "1 ឆ្នាំ (365 ថ្ងៃ)"])
+        create_clicked = st.form_submit_button("🔑 បង្កើតលេខកូដ Auto", use_container_width=True)
+    if create_clicked:
+        days = {"7 ថ្ងៃ": 7, "1 ខែ (30 ថ្ងៃ)": 30, "1 ឆ្នាំ (365 ថ្ងៃ)": 365}[duration_label]
+        try:
+            code, expires = add_license(customer_name, days)
+            st.session_state.new_license_code = code
+            st.session_state.new_license_expiry = expires.strftime("%Y-%m-%d %H:%M")
+        except Exception as exc:
+            st.error(str(exc))
+    if st.session_state.get("new_license_code"):
+        st.success(
+            f"លេខកូដ៖ {st.session_state.new_license_code}\n\nផុតកំណត់៖ {st.session_state.new_license_expiry}"
+        )
+        st.code(st.session_state.new_license_code, language=None)
+
+    st.markdown("## 👥 គ្រប់គ្រងអតិថិជន")
+    rows = license_rows()
+    if not rows:
+        st.info("មិនទាន់មានលេខកូដអតិថិជន។")
+    now = datetime.datetime.now()
+    for row in rows:
+        expiry = datetime.datetime.fromisoformat(row["expires_at"])
+        expired = now >= expiry
+        status = "ផុតកំណត់" if expired else "កំពុងប្រើ" if row["is_active"] else "បានបិទ"
+        with st.expander(f"{row['customer_name']} • {row['access_code']} • {status}"):
+            st.write(f"**ថ្ងៃផុតកំណត់:** {expiry.strftime('%Y-%m-%d %H:%M')}")
+            st.write(f"**ចំនួន Login:** {row['login_count']}")
+            action1, action2, action3, action4 = st.columns(4)
+            with action1:
+                if st.button("+7 ថ្ងៃ", key=f"renew7_{row['id']}", use_container_width=True):
+                    renew_license(row["id"], 7); st.rerun()
+            with action2:
+                if st.button("+30 ថ្ងៃ", key=f"renew30_{row['id']}", use_container_width=True):
+                    renew_license(row["id"], 30); st.rerun()
+            with action3:
+                label = "បិទ" if row["is_active"] else "បើក"
+                if st.button(label, key=f"toggle_{row['id']}", use_container_width=True):
+                    update_license_status(row["id"], not bool(row["is_active"])); st.rerun()
+            with action4:
+                if st.button("លុប", key=f"delete_{row['id']}", use_container_width=True):
+                    delete_license(row["id"]); st.rerun()
+
+
+initialize_license_database()
+
+# A small decorative control is shown in the top-right corner. Five clicks
+# reveal the private owner login. The Admin dashboard still requires both
+# the owner name and password, so accidental clicks do not grant access.
+hidden_owner_trigger()
+if st.session_state.get("admin_gate_visible", False) or st.session_state.get("admin_authenticated", False):
+    admin_dashboard()
+    st.stop()
+
+if not st.session_state.get("customer_authenticated", False):
+    public_login_screen()
+    st.stop()
+
+# Re-check expiry on every rerun, so an expired/blocked code loses access
+# immediately even if the customer keeps the page open.
+login_ok, login_message, login_row = validate_customer_login(
+    st.session_state.get("customer_name", ""),
+    st.session_state.get("customer_code", ""),
+)
+if not login_ok:
+    for key in ("customer_authenticated", "customer_name", "customer_code", "customer_expires_at"):
+        st.session_state.pop(key, None)
+    st.error(login_message)
+    st.rerun()
+
+customer_bar_left, customer_bar_right = st.columns([4, 1])
+with customer_bar_left:
+    expiry_display = datetime.datetime.fromisoformat(login_row["expires_at"]).strftime("%Y-%m-%d")
+    st.caption(f"👤 {login_row['customer_name']} • សុពលភាពដល់ {expiry_display}")
+with customer_bar_right:
+    if st.button("ចាកចេញ", key="customer_logout", use_container_width=True):
+        for key in ("customer_authenticated", "customer_name", "customer_code", "customer_expires_at"):
+            st.session_state.pop(key, None)
+        st.rerun()
+
+# Read this browser's saved key once per Streamlit session.
+if "api_keys_manager" not in st.session_state:
+    st.session_state.api_keys_manager = load_private_api_keys()
+
+# Defaults are per user/session; no user's working data is shared with another.
+for state_key, default_value in {
+    "target_language": "Khmer (ខ្មែរ)",
+    "translation_style": "🔴 Chinese Drama Pro",
+    "model_selector": "gemini-2.5-flash",
+    "lite_mode": True,
+    "api_saved_notice": False,
+}.items():
+    if state_key not in st.session_state:
+        st.session_state[state_key] = default_value
+
+with st.container(key="api_menu_container"):
+    with st.popover("☰", help="API Key និងការកំណត់កម្មវិធី"):
+        st.markdown("### 🔑 API Key និងការកំណត់")
+        st.caption("ទូរសព្ទ/Browser នីមួយៗមាន API Key និងឯកសារផ្ទាល់ខ្លួន។")
+
+        st.text_area(
+            "Gemini API Key",
+            height=120,
+            placeholder="AIza...",
+            key="api_keys_manager",
+            help="អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ។ បើសោមួយ quota ពេញ App នឹងសាកសោបន្ទាប់។",
+        )
+
+        save_col, logout_col = st.columns(2)
+        with save_col:
+            if st.button("💾 រក្សាទុក", key="save_api_keys", use_container_width=True):
+                entered_keys = [
+                    line.strip()
+                    for line in st.session_state.api_keys_manager.splitlines()
+                    if line.strip()
+                ]
+                if entered_keys:
+                    save_private_api_keys(st.session_state.api_keys_manager)
+                    st.session_state.api_saved_notice = True
+                    st.rerun()
+                else:
+                    st.warning("សូមបញ្ចូល API Key ជាមុន។")
+
+        with logout_col:
+            if st.button("🗑️ លុបសោ", key="remove_api_keys", use_container_width=True):
+                clear_private_user_session()
+                st.rerun()
+
+        current_keys = [
+            line.strip()
+            for line in st.session_state.get("api_keys_manager", "").splitlines()
+            if line.strip()
+        ]
+        if current_keys:
+            st.success(f"✅ API Key ត្រៀមប្រើ៖ {len(current_keys)} • Auto rotation")
+            st.caption("🔒 បានអ៊ិនគ្រីប និងរក្សាទុកជាប់សម្រាប់ Browser/ទូរសព្ទនេះ។ សោនឹងបាត់តែពេលអ្នកចុច «លុបសោ» ឬលុបទិន្នន័យ Browser ដោយខ្លួនឯង។")
+        else:
+            st.info("បញ្ចូល API Key រួចចុច «រក្សាទុក»។")
+
+        st.divider()
+        st.selectbox("🌍 Target Language", ["Khmer (ខ្មែរ)"], key="target_language")
+        st.radio(
+            "🎭 Translation Style",
+            ["🔴 Chinese Drama Pro", "⚪ Whisper Timestamp Sync", "⚪ Standard"],
+            key="translation_style",
+        )
+        st.selectbox(
+            "🤖 Model",
+            ["gemini-2.5-flash", "gemini-2.5-pro"],
+            key="model_selector",
+        )
+        st.toggle("📶 4G Lite Mode", key="lite_mode")
+
+api_keys_text = st.session_state.get("api_keys_manager", "")
+valid_api_keys = [line.strip() for line in api_keys_text.splitlines() if line.strip()]
+api_key = valid_api_keys[0] if valid_api_keys else ""
+translation_style = st.session_state.translation_style
+model = st.session_state.model_selector
+lite_mode = st.session_state.lite_mode
+max_mb = 60 if lite_mode else 150
+
+st.markdown(
+    '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
+    unsafe_allow_html=True,
+)
+
+tab_video, tab_translate, tab_srt_speech, tab_text_speech = st.tabs(
+    ["🎬 Video → SRT", "📝 AI Subtitle Translator", "📜 SRT → Speech", "🎙️ Text → Speech"]
+)
+
+with tab_video:
+    st.markdown('<div class="section-title">1️⃣ Generate Subtitles (Khmer ខ្មែរ)</div>', unsafe_allow_html=True)
+
+    uploaded_video = st.file_uploader(
+        "Upload Video",
+        type=["mp4", "mov", "mkv", "webm"],
+        help="MP4 ត្រូវបានណែនាំ។ App នឹងបង្រួមវីដេអូទៅ 480p ដោយស្វ័យប្រវត្តិ ដើម្បីកាត់បន្ថយ RAM និងល្បឿនដំណើរការ។",
+        key=f"main_video_upload_{st.session_state.video_uploader_version}",
+    )
+
+    if uploaded_video is not None:
+        source_stem = safe_download_stem(Path(uploaded_video.name).stem, 'khmer_story')
+        st.session_state.source_video_stem = source_stem
+        if not st.session_state.get('mp3_download_name') or st.session_state.get('mp3_download_name') == 'khmer_story_dubbed':
+            st.session_state.mp3_download_name = f"{source_stem}_khmer"
+
+        # Keep the uploaded filename and file size private on-screen.
+        # The file is still available internally for validation and processing.
+        size_mb = uploaded_video.size / (1024 * 1024)
+
+        if size_mb > max_mb:
+            st.error(f"សូមបង្រួមវីដេអូឱ្យតិចជាង {max_mb} MB។")
+        else:
+            if not lite_mode and st.checkbox("▶️ Video Preview"):
+                st.video(uploaded_video)
+
+            if st.button("📝 Generate Khmer SRT", key="generate_srt", use_container_width=True):
+                if not api_key:
+                    st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
+                else:
+                    video_path = save_upload(uploaded_video)
+                    st.session_state.project_temp_files.append(str(video_path))
+                    try:
+                        progress_bar = st.progress(1)
+                        progress_text = st.empty()
+                        started_at = time.time()
+                        progress_text.markdown("🎞️ កំពុងបង្រួមវីដេអូសម្រាប់ទាញសំឡេង…")
+
+                        # Run the AI task in another thread so the page can keep
+                        # updating the percentage and elapsed time.
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(
+                                video_to_srt,
+                                video_path,
+                                valid_api_keys,
+                                model,
+                            )
+
+                            # Estimate only; the real finish time depends on 4G,
+                            # video duration, Gemini processing and server load.
+                            estimated_seconds = max(45.0, min(600.0, 35.0 + (size_mb * 5.0)))
+
+                            while not future.done():
+                                elapsed = time.time() - started_at
+                                percent = min(
+                                    95,
+                                    max(1, int((elapsed / estimated_seconds) * 95)),
+                                )
+                                minutes = int(elapsed // 60)
+                                seconds = int(elapsed % 60)
+
+                                progress_bar.progress(percent)
+                                progress_text.markdown(
+                                    f"### ⏱️ {percent}%  •  "
+                                    f"{minutes:02d}:{seconds:02d}"
+                                )
+                                time.sleep(0.5)
+
+                            generated_srt = future.result()
+
+                        # Automatically place the completed Khmer SRT into the
+                        # existing editor when progress reaches 100%.
+                        st.session_state.srt_text = generated_srt
+                        st.session_state.main_srt_editor = generated_srt
+                        st.session_state.pending_srt = ""
+                        st.session_state.audio_bytes = None
+                        elapsed = time.time() - started_at
+                        minutes = int(elapsed // 60)
+                        seconds = int(elapsed % 60)
+
+                        # Completion indicators are temporary. Remove them immediately
+                        # so the finished SRT editor becomes the only visible result.
+                        progress_bar.empty()
+                        progress_text.empty()
+                        st.rerun()
+
+                    except Exception as exc:
+                        progress_bar.empty()
+                        progress_text.empty()
+                        st.error(f"❌ {friendly_ai_error(exc, len(valid_api_keys))}")
+                    finally:
+                        video_path.unlink(missing_ok=True)
+
+    st.subheader("Generated SRT")
+    st.caption("SRT នឹងចូលប្រអប់នេះដោយស្វ័យប្រវត្តិ ពេលដំណើរការដល់ 100%។ អ្នកអាចកែបានមុន Generate MP3។")
+
+    pending_editor_update = st.session_state.pop("pending_editor_update", None)
+    if pending_editor_update is not None:
+        st.session_state.main_srt_editor = pending_editor_update
+        st.session_state.srt_text = pending_editor_update
+
+    if "main_srt_editor" not in st.session_state:
+        st.session_state.main_srt_editor = st.session_state.srt_text
+
+    st.text_area(
+        "SRT Editor",
+        height=360,
+        label_visibility="collapsed",
+        key="main_srt_editor",
+    )
+    st.session_state.srt_text = st.session_state.main_srt_editor
+
+    # Keep both SRT action buttons on one row directly below the editor,
+    # including portrait and landscape mobile screens.
+    with st.container(key="srt_actions"):
+        c1, c2 = st.columns([1, 1], gap=None)
+        with c1:
+            if st.button(
+                "🧠 កែ SRT",
+                key="analyze_thoughts",
+                use_container_width=True,
+            ):
+                if not st.session_state.srt_text.strip():
+                    st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
+                elif not api_key:
+                    st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
+                else:
+                    analysis_video_path = None
+                    try:
+                        if uploaded_video is not None:
+                            analysis_video_path = save_upload(uploaded_video)
+                        with st.spinner("កំពុងរក្សាតួអង្គ កែស្លាកគិតក្នុងចិត្ត និងកាត់ឃ្លាឱ្យខ្លីតាមពេលវេលា…"):
+                            analyzed_srt = analyze_inner_thoughts(
+                                st.session_state.srt_text,
+                                api_key,
+                                model,
+                                analysis_video_path,
+                            )
+                        st.session_state.srt_text = analyzed_srt
+                        st.session_state.pending_editor_update = analyzed_srt
+                        st.session_state.audio_bytes = None
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"❌ {exc}")
+                    finally:
+                        if analysis_video_path is not None:
+                            analysis_video_path.unlink(missing_ok=True)
+        with c2:
+            if st.session_state.srt_text:
+                st.download_button(
+                    "⬇️ ទាញ SRT",
+                    st.session_state.srt_text.encode("utf-8"),
+                    "khmer_story.srt",
+                    "application/x-subrip",
+                    use_container_width=True,
+                )
+            else:
+                st.button(
+                    "⬇️ ទាញ SRT",
+                    disabled=True,
+                    key="download_srt_disabled",
+                    use_container_width=True,
+                )
+
+    st.markdown('<div class="section-title">2️⃣ AI Dubbing (Edge TTS Studio)</div>', unsafe_allow_html=True)
+
+    # Before completion, show only the Generate button. After completion,
+    # remove the progress/result messages and replace them with filename + Download.
+    if not st.session_state.audio_bytes:
+        generate_clicked = st.button(
+            "🎙️ Generate Dubbed Audio (MP3)",
+            key="generate_audio",
+            use_container_width=False,
+        )
+
+        if generate_clicked:
+            if not st.session_state.srt_text.strip():
+                st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
+            else:
+                progress_bar = st.progress(0)
+                progress_text = st.empty()
+                started_at = time.monotonic()
+
+                def update_audio_progress(percent, message):
+                    elapsed = max(0, int(time.monotonic() - started_at))
+                    minutes, seconds = divmod(elapsed, 60)
+                    progress_bar.progress(max(0, min(100, int(percent))))
+                    progress_text.markdown(
+                        f"### ⏱️ {int(percent)}% • {minutes:02d}:{seconds:02d}<br>{message}",
+                        unsafe_allow_html=True,
+                    )
+
+                try:
+                    update_audio_progress(1, "កំពុងចាប់ផ្ដើមបង្កើតសំឡេង…")
+                    st.session_state.audio_bytes = create_mp3(
+                        st.session_state.srt_text,
+                        progress_callback=update_audio_progress,
+                    )
+                    # Clear the processing display immediately after completion.
+                    progress_bar.empty()
+                    progress_text.empty()
+                    if not st.session_state.get("mp3_download_name"):
+                        stem = st.session_state.get("source_video_stem", "khmer_story")
+                        st.session_state.mp3_download_name = f"{stem}_khmer"
+                    st.rerun()
+                except Exception as exc:
+                    progress_bar.empty()
+                    progress_text.empty()
+                    st.error(f"❌ បង្កើត MP3 មិនបាន៖ {exc}")
+    else:
+        st.text_input(
+            "✏️ ឈ្មោះឯកសារ MP3",
+            key="mp3_download_name",
+            placeholder="ឧទាហរណ៍៖ រឿងភាគទី១_សំឡេងខ្មែរ",
+            help="អ្នកអាចកែឈ្មោះឯកសារមុនចុច Download។",
+        )
+        st.audio(st.session_state.audio_bytes, format="audio/mp3")
+        download_stem = safe_download_stem(
+            st.session_state.get("mp3_download_name"),
+            fallback="khmer_story_dubbed",
+        )
+        st.download_button(
+            "⬇️ ទាញយកសំឡេង MP3",
+            st.session_state.audio_bytes,
+            f"{download_stem}.mp3",
+            "audio/mpeg",
+            use_container_width=True,
+        )
+
+    st.markdown('<div class="clear-wrap">', unsafe_allow_html=True)
+    if st.button("🗑️ សម្អាត (Clear Video Project)", key="clear_project"):
+        # Delete only this user's temporary files. API keys/cookies are kept.
+        for temp_name in st.session_state.get("project_temp_files", []):
+            try:
+                temp_path = Path(temp_name)
+                if temp_path.exists() and temp_path.is_file():
+                    temp_path.unlink()
+            except OSError:
+                pass
+
+        st.session_state.project_temp_files = []
+        st.session_state.srt_text = ""
+        st.session_state.pending_srt = ""
+        st.session_state.audio_bytes = None
+        st.session_state.audio_job_pending = False
+        st.session_state.pending_editor_update = ""
+        st.session_state.source_video_stem = "khmer_story"
+        st.session_state.mp3_download_name = "khmer_story_dubbed"
+
+        # Give file_uploader a brand-new widget key so the selected video
+        # disappears immediately on iPhone, Android and desktop browsers.
+        st.session_state.video_uploader_version = (
+            int(st.session_state.get("video_uploader_version", 0)) + 1
+        )
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with tab_translate:
+    st.header("AI Subtitle Translator")
+    st.info("បិទភ្ជាប់ Chinese SRT ហើយបកប្រែទៅ Khmer SRT។")
+    source_srt = st.text_area("Chinese SRT", height=300, key="translator_source")
+    if st.button("🌐 Translate to Khmer", key="translate_btn"):
+        if not source_srt.strip():
+            st.warning("សូមបញ្ចូល Chinese SRT។")
+        elif not api_key:
+            st.error("សូមចុចប៊ូតុង ☰ បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
+        else:
+            try:
+                source_cues = srt_to_structured_cues(source_srt)
+                if not source_cues:
+                    raise ValueError("Chinese SRT មិនត្រឹមត្រូវ។")
+                client = genai.Client(api_key=api_key)
+                translated_map = {}
+                for offset in range(0, len(source_cues), 35):
+                    batch = source_cues[offset:offset + 35]
+                    payload = "\n".join(
+                        f'ID={cue["id"]} | SOURCE={cue["text"]}' for cue in batch
+                    )
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=TRANSLATE_PROMPT + "\n\nCUES:\n" + payload,
+                    )
+                    for item in parse_json_array(response.text or ""):
+                        cue_id = int(item.get("id"))
+                        tag = str(item.get("tag", "M")).upper()
+                        if tag not in VOICE_PROFILES:
+                            tag = "M"
+                        translated_map[cue_id] = {"tag": tag, "text": str(item.get("text", "")).strip()}
+                blocks = []
+                for cue in source_cues:
+                    item = translated_map.get(cue["id"])
+                    if not item or not item["text"]:
+                        raise RuntimeError(f'បកប្រែមិនអស់បន្ទាត់ {cue["id"]}')
+                    blocks.append(
+                        f'{cue["id"]}\n{ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])}\n'
+                        f'[{item["tag"]}] {item["text"]}'
+                    )
+                st.session_state.srt_text = "\n\n".join(blocks)
+                st.session_state.pending_editor_update = st.session_state.srt_text
+                st.success("✅ បកប្រែរួចរាល់ និងរក្សា Timestamp ដើម។")
+            except Exception as exc:
+                st.error(f"❌ {exc}")
+
+with tab_srt_speech:
+    st.header("SRT → Speech")
+    speech_srt = st.text_area(
+        "Khmer SRT with [M] [F] [BOY] [GIRL] [OLD_M] [OLD_F] [M_THINK] [F_THINK]",
+        height=360,
+        key="speech_srt_input",
+    )
+    if st.button("🎧 Create MP3", key="srt_to_speech_btn"):
+        if not speech_srt.strip():
+            st.warning("សូមបញ្ចូល Khmer SRT។")
+        else:
+            try:
+                with st.spinner("កំពុងបង្កើតសំឡេង…"):
+                    st.session_state.audio_bytes = create_mp3(speech_srt)
+                st.success("✅ បង្កើត MP3 រួចរាល់។")
+            except Exception as exc:
+                st.error(f"❌ {exc}")
+
+with tab_text_speech:
+    st.header("Text → Speech")
+    plain_text = st.text_area("Khmer Text", height=260, key="plain_text_input")
+    voice_choice = st.selectbox(
+        "Voice",
+        ["M", "F", "BOY", "GIRL", "OLD_M", "OLD_F", "M_THINK", "F_THINK"],
+        key="plain_voice",
+    )
+    if st.button("🔊 Generate Voice", key="plain_voice_btn"):
+        if not plain_text.strip():
+            st.warning("សូមបញ្ចូលអត្ថបទខ្មែរ។")
+        else:
+            try:
+                with tempfile.TemporaryDirectory() as folder:
+                    output = Path(folder) / "speech.mp3"
+                    run_async(synthesize(plain_text.strip(), VOICE_PROFILES[voice_choice], output))
+                    st.session_state.audio_bytes = output.read_bytes()
+                st.success("✅ បង្កើតសំឡេងរួចរាល់។")
+            except Exception as exc:
+                st.error(f"❌ {exc}")
+
+st.caption("AI-KHEMRA-BRO • Chinese Story Translation • Mobile-first")
