@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "3.0"
+APP_VERSION = "3.1"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -1653,6 +1653,7 @@ def initialize_license_database():
         _ensure_column(connection, "licenses", "active_session_last_seen", "TEXT")
         _ensure_column(connection, "licenses", "created_card_until", "TEXT")
         _ensure_column(connection, "licenses", "saved_api_keys_encrypted", "TEXT")
+        _ensure_column(connection, "licenses", "plan_label", "TEXT")
         old_columns = {row["name"] for row in connection.execute("PRAGMA table_info(licenses)")}
         if "access_code" in old_columns:
             rows = connection.execute(
@@ -1757,29 +1758,49 @@ def create_access_code():
             return code
 
 
-def add_license(customer_name, duration_days):
+def add_license(customer_name, duration_days, plan_label=""):
     name = normalize_customer_name(customer_name)
     if not name:
         raise ValueError("សូមបញ្ចូលឈ្មោះអតិថិជន។")
+
     days = int(duration_days)
-    if days not in (7, 30, 365):
+    allowed_plans = {
+        7: "7 ថ្ងៃ",
+        30: "1 ខែ",
+        90: "3 ខែ",
+        180: "6 ខែ",
+        365: "1 ឆ្នាំ",
+    }
+    if days not in allowed_plans:
         raise ValueError("រយៈពេលមិនត្រឹមត្រូវ។")
+
+    plan = str(plan_label or allowed_plans[days]).strip()
     now = _utcnow()
     expires = now + datetime.timedelta(days=days)
     card_until = now + datetime.timedelta(hours=NEW_LICENSE_CARD_HOURS)
     code = create_access_code()
+
     with license_connection() as connection:
         connection.execute(
             """
             INSERT INTO licenses
             (customer_name, access_code_hash, access_code_display, created_at, expires_at,
-             is_active, created_card_until)
-            VALUES (?, ?, ?, ?, ?, 1, ?)
+             is_active, created_card_until, plan_label)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
             """,
-            (name, _hash_code(code), code, _iso(now), _iso(expires), _iso(card_until)),
+            (
+                name,
+                _hash_code(code),
+                code,
+                _iso(now),
+                _iso(expires),
+                _iso(card_until),
+                plan,
+            ),
         )
         connection.commit()
-    _audit("license_created", get_admin_username(), f"{name}|{days} days")
+
+    _audit("license_created", get_admin_username(), f"{name}|{plan}|{days} days")
     return code, expires, card_until
 
 
@@ -1877,7 +1898,7 @@ def validate_customer_login(customer_name, access_code, existing_token="", acqui
         elif not bool(row["is_active"]):
             failure_reason = "លេខកូដនេះត្រូវបាន Owner បិទ។"
         elif now >= _parse_iso(row["expires_at"]):
-            failure_reason = "លេខកូដរបស់អ្នកបានផុតកំណត់។ សូមទាក់ទង Owner។"
+            failure_reason = "កញ្ចប់របស់អ្នកបានផុតកំណត់។ សូមទាក់ទង Owner ដើម្បីបន្តសិទ្ធិប្រើប្រាស់។"
         else:
             # No device lock and no single-session lock. A purchased code can
             # be reused after logout/close and can work on any phone/browser.
@@ -1951,20 +1972,43 @@ def update_license_status(license_id, active):
     _audit("license_status", get_admin_username(), f"id={license_id}|active={bool(active)}")
 
 
-def renew_license(license_id, extra_days):
+def renew_license(license_id, extra_days, plan_label=""):
+    allowed_plans = {
+        7: "7 ថ្ងៃ",
+        30: "1 ខែ",
+        90: "3 ខែ",
+        180: "6 ខែ",
+        365: "1 ឆ្នាំ",
+    }
+    days = int(extra_days)
+    if days not in allowed_plans:
+        raise ValueError("រយៈពេលបន្តមិនត្រឹមត្រូវ។")
+
     with license_connection() as connection:
-        row = connection.execute("SELECT expires_at,customer_name FROM licenses WHERE id=?", (int(license_id),)).fetchone()
-        if row is None:
-            return
-        old_expiry = _parse_iso(row["expires_at"])
-        base = max(old_expiry, _utcnow())
-        new_expiry = base + datetime.timedelta(days=int(extra_days))
+        row = connection.execute(
+            "SELECT expires_at,customer_name FROM licenses WHERE id=?",
+            (int(license_id),),
+        ).fetchone()
+        if not row:
+            raise ValueError("រកមិនឃើញ Customer។")
+
+        now = _utcnow()
+        current_expiry = _parse_iso(row["expires_at"])
+        base = max(current_expiry, now)
+        new_expiry = base + datetime.timedelta(days=days)
+        plan = str(plan_label or allowed_plans[days]).strip()
+
         connection.execute(
-            "UPDATE licenses SET expires_at=?, is_active=1 WHERE id=?",
-            (_iso(new_expiry), int(license_id)),
+            """
+            UPDATE licenses
+            SET expires_at=?, is_active=1, plan_label=?
+            WHERE id=?
+            """,
+            (_iso(new_expiry), plan, int(license_id)),
         )
         connection.commit()
-    _audit("license_renewed", get_admin_username(), f"{row['customer_name']}|+{extra_days}")
+
+    _audit("license_renewed", get_admin_username(), f"{row['customer_name']}|{plan}|+{days}")
 
 
 def disconnect_license(license_id):
@@ -2133,12 +2177,12 @@ def admin_dashboard():
     st.markdown("## ➕ បង្កើត Customer")
     with st.form("create_license_form", clear_on_submit=True):
         customer_name = st.text_input("ឈ្មោះអតិថិជន")
-        duration_label = st.selectbox("រយៈពេល", ["7 ថ្ងៃ", "30 ថ្ងៃ", "1 ឆ្នាំ"])
+        duration_label = st.selectbox("រយៈពេល", ["7 ថ្ងៃ", "1 ខែ", "3 ខែ", "6 ខែ", "1 ឆ្នាំ"])
         create_clicked = st.form_submit_button("🔑 បង្កើត Access Code", use_container_width=True)
     if create_clicked:
-        days = {"7 ថ្ងៃ": 7, "30 ថ្ងៃ": 30, "1 ឆ្នាំ": 365}[duration_label]
+        days = {"7 ថ្ងៃ": 7, "1 ខែ": 30, "3 ខែ": 90, "6 ខែ": 180, "1 ឆ្នាំ": 365}[duration_label]
         try:
-            code, expires, card_until = add_license(customer_name, days)
+            code, expires, card_until = add_license(customer_name, days, duration_label)
             st.session_state.new_license_name = normalize_customer_name(customer_name)
             st.session_state.new_license_code = code
             st.session_state.new_license_expiry = _iso(expires)
@@ -2166,20 +2210,34 @@ def admin_dashboard():
             st.write(f"**ផុតកំណត់:** {expiry.astimezone().strftime('%Y-%m-%d %H:%M')}")
             st.write(f"**Login:** {row['login_count']} ដង")
             st.code(f"Name: {row['customer_name']}\nCode: {row['access_code_display']}", language=None)
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                if st.button("+7 ថ្ងៃ", key=f"renew7_{row['id']}", use_container_width=True):
-                    renew_license(row["id"], 7); st.rerun()
-            with c2:
-                if st.button("+30 ថ្ងៃ", key=f"renew30_{row['id']}", use_container_width=True):
-                    renew_license(row["id"], 30); st.rerun()
-            with c3:
+            renew_cols = st.columns(5)
+            renew_options = [
+                ("+7 ថ្ងៃ", 7, "7 ថ្ងៃ"),
+                ("+1 ខែ", 30, "1 ខែ"),
+                ("+3 ខែ", 90, "3 ខែ"),
+                ("+6 ខែ", 180, "6 ខែ"),
+                ("+1 ឆ្នាំ", 365, "1 ឆ្នាំ"),
+            ]
+            for renew_col, (button_label, renew_days, plan_name) in zip(renew_cols, renew_options):
+                with renew_col:
+                    if st.button(
+                        button_label,
+                        key=f"renew_{renew_days}_{row['id']}",
+                        use_container_width=True,
+                    ):
+                        renew_license(row["id"], renew_days, plan_name)
+                        st.rerun()
+
+            action_left, action_right = st.columns(2)
+            with action_left:
                 label = "បិទ" if row["is_active"] else "បើក"
                 if st.button(label, key=f"toggle_{row['id']}", use_container_width=True):
-                    update_license_status(row["id"], not bool(row["is_active"])); st.rerun()
-            with c4:
+                    update_license_status(row["id"], not bool(row["is_active"]))
+                    st.rerun()
+            with action_right:
                 if st.button("ផ្តាច់ Session", key=f"disconnect_{row['id']}", use_container_width=True):
-                    disconnect_license(row["id"]); st.rerun()
+                    disconnect_license(row["id"])
+                    st.rerun()
 
             with st.expander("⚠️ Advanced Delete"):
                 confirmation = st.text_input("វាយ DELETE ដើម្បីលុប", key=f"delete_confirm_{row['id']}")
@@ -2243,8 +2301,7 @@ if not login_ok:
 st.session_state.customer_session_token = current_token
 customer_bar_left, customer_bar_right = st.columns([4, 1])
 with customer_bar_left:
-    expiry_display = _parse_iso(login_row["expires_at"]).astimezone().strftime("%Y-%m-%d")
-    st.caption(f"👤 {login_row['customer_name']} • សុពលភាពដល់ {expiry_display}")
+    st.caption(f"👤 {login_row['customer_name']}")
 with customer_bar_right:
     if st.button("ចាកចេញ", key="customer_logout", use_container_width=True):
         release_customer_session(st.session_state.get("customer_code", ""), current_token)
@@ -2272,6 +2329,23 @@ for state_key, default_value in {
 with st.container(key="api_menu_container"):
     with st.popover("☰", help="API Key និងការកំណត់កម្មវិធី"):
         st.markdown("### 🔑 API Key និងការកំណត់")
+
+        # Private subscription status: this information comes only from the
+        # currently authenticated license row. Other customers cannot see it.
+        private_expiry = _parse_iso(login_row["expires_at"]).astimezone()
+        private_plan = str(dict(login_row).get("plan_label") or "កញ្ចប់សមាជិក")
+        private_now = _utcnow()
+        private_active = bool(login_row["is_active"]) and private_now < _parse_iso(login_row["expires_at"])
+
+        st.markdown("#### 📅 កញ្ចប់របស់អ្នក")
+        st.write(f"**កញ្ចប់៖** {private_plan}")
+        st.write(f"**ផុតកំណត់៖** {private_expiry.strftime('%d/%m/%Y %I:%M %p')}")
+        if private_active:
+            st.success("✅ កំពុងដំណើរការ")
+        else:
+            st.error("❌ កញ្ចប់បានផុតកំណត់។ សូមទាក់ទង Owner ដើម្បីបន្តសិទ្ធិ។")
+
+        st.divider()
         st.caption("API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នកក្នុង Database។ បិទទូរសព្ទ បិទ Safari ឬ Update/Restart កម្មវិធីក៏មិនបាត់ទេ។ វាបាត់តែពេលចុច «លុបសោ»។")
 
         st.text_area(
