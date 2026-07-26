@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -287,12 +287,12 @@ SREYMOM='km-KH-SreymomNeural'
 VOICE_PROFILES={
 # Warm, natural profiles. Large pitch boosts make Khmer Neural voices thin/airy,
 # so age differences use mostly rate and only a very small pitch movement.
-'BOY':{'voice':PISITH,'rate':'+2%','pitch':'+3Hz','volume':'+6%'},
-'GIRL':{'voice':SREYMOM,'rate':'+2%','pitch':'+3Hz','volume':'+6%'},
-'M_YOUNG':{'voice':PISITH,'rate':'-1%','pitch':'+1Hz','volume':'+6%'},
-'F_YOUNG':{'voice':SREYMOM,'rate':'-1%','pitch':'+1Hz','volume':'+6%'},
-'M_ADULT':{'voice':PISITH,'rate':'-3%','pitch':'+0Hz','volume':'+6%'},
-'F_ADULT':{'voice':SREYMOM,'rate':'-3%','pitch':'+0Hz','volume':'+6%'},
+'BOY':{'voice':PISITH,'rate':'+1%','pitch':'+1Hz','volume':'+4%'},
+'GIRL':{'voice':SREYMOM,'rate':'+1%','pitch':'+1Hz','volume':'+4%'},
+'M_YOUNG':{'voice':PISITH,'rate':'-1%','pitch':'+0Hz','volume':'+4%'},
+'F_YOUNG':{'voice':SREYMOM,'rate':'-1%','pitch':'+0Hz','volume':'+4%'},
+'M_ADULT':{'voice':PISITH,'rate':'-2%','pitch':'+0Hz','volume':'+4%'},
+'F_ADULT':{'voice':SREYMOM,'rate':'-2%','pitch':'+0Hz','volume':'+4%'},
 'M_OLD':{'voice':PISITH,'rate':'-7%','pitch':'-3Hz','volume':'+7%'},
 'F_OLD':{'voice':SREYMOM,'rate':'-7%','pitch':'-3Hz','volume':'+7%'},
 'M_THINK':{'voice':PISITH,'rate':'-5%','pitch':'-1Hz','volume':'+4%'},
@@ -338,8 +338,8 @@ PROFESSIONAL KHMER TRANSLATION RULES:
 - Avoid formal, book-like, bureaucratic, robotic, dry, or machine-translated Khmer unless the character and scene truly require formal speech.
 - Prefer short, familiar, easy-to-understand Khmer expressions. The sentence should sound natural when spoken aloud, not merely look grammatically correct in writing.
 - Preserve the original meaning, intention, emotion, humor, threat, sarcasm, romance, fear, grief, status, and relationship.
-- You may reorder or shorten wording inside the same cue, replace unnatural literal phrases with familiar Khmer speech, and add a tiny natural connector when needed, but never invent information or change the meaning.
-- Remove unnecessary repeated subjects, pronouns, explanations, and filler when Khmer speakers would naturally omit them.
+- You may reorder wording inside the same cue and replace unnatural literal phrases with familiar Khmer speech, but you MUST preserve every audible idea, response, interjection, negation, name, number, command, and emotional particle. Never invent information or change the meaning.
+- Do NOT delete short words, filler sounds, reactions, repeated words, names, negations, or tiny replies when they are audible in the source. Translate natural reactions such as 嗯, 啊, 哦, 喂, 哎, 好, 不, 是, 什么 into suitable spoken Khmer such as អឺ, អា៎, អូ, ហេ៎, អុញ, បាន, ទេ, មែន, អី—according to context.
 - Use conversational sentence order and natural responses such as “អញ្ចឹងមែន?”, “បានហើយ”, “មិនអីទេ”, “តើមានរឿងអី?”, or similar only when they accurately match the source meaning and scene.
 - Choose pronouns and forms of address that fit age, gender, rank, relationship, and scene context, such as: បង/អូន, ខ្ញុំ/លោក, ឯង/អញ, ពួកម៉ាក, សម្លាញ់, លោកគ្រូ, សិស្ស, ព្រះអង្គ, អធិរាជ, ម្ចាស់, មេទ័ព, លោកតា, លោកយាយ.
 - Use natural Khmer emotion particles only when suitable, for example: ណា, ណ៎, ចា៎, ចុះ, អញ្ចឹង, ហ្នឹង, មែនទេ, វើយ, ហ្មង, ហាស, អូហ៍.
@@ -374,9 +374,17 @@ SUBTITLE LENGTH RULES:
 - Each cue includes MAX_WORDS. The Khmer text MUST stay at or below that word limit.
 - Cut and reshape the translation so it fits the subtitle time and can be spoken comfortably before the cue ends.
 - Prefer one short, clear, natural spoken sentence per cue.
-- Keep the core meaning and emotional force while removing unnecessary repetition, filler, over-explanation, and words Khmer speakers normally leave out.
+- Keep the complete meaning and emotional force. Never remove an audible word merely because it is short, repeated, a filler, a reaction, or difficult to fit. Use concise Khmer wording while preserving it.
 - Do not make a line unnaturally incomplete merely to shorten it; choose a shorter natural Khmer expression instead.
-- Never merge, split, omit, or renumber cues.
+- Never merge, split, omit, summarize away, or renumber cues. Every supplied cue must contain spoken Khmer text unless the source cue is truly silent/non-speech.
+
+MANDATORY NO-SKIP RULES:
+- Translate 100% of the audible speech in every cue, including one-word replies and tiny sounds.
+- Never return an empty text value for a cue containing speech.
+- Preserve negatives such as “not/no/don’t”, names, numbers, titles, greetings, calls, sighs, surprise, agreement, disagreement, and repeated emphasis.
+- Do not summarize two clauses into one if that removes information.
+- If the source is very short, return a correspondingly short Khmer utterance rather than deleting it.
+- Recheck each cue against SOURCE before output: every audible element must be represented in Khmer.
 
 OUTPUT RULES:
 - Return exactly one object for every supplied cue ID, in the same order.
@@ -624,11 +632,18 @@ def transcribe_with_whisper(wav_path):
     segments, _ = model.transcribe(
         str(wav_path),
         language="zh",
-        beam_size=5,
+        beam_size=8,
+        best_of=5,
         vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 250},
+        vad_parameters={
+            "min_silence_duration_ms": 120,
+            "min_speech_duration_ms": 70,
+            "speech_pad_ms": 260,
+        },
         condition_on_previous_text=True,
-        word_timestamps=False,
+        word_timestamps=True,
+        no_speech_threshold=0.35,
+        log_prob_threshold=-1.2,
     )
     cues = []
     last_end = 0.0
@@ -685,8 +700,9 @@ def parse_json_array(raw_text):
 def cue_word_limit(start, end):
     """Conservative Khmer spoken-word budget for natural dubbing speed."""
     duration = max(0.35, float(end) - float(start))
-    # Roughly 2.0 short Khmer words per second, with a small minimum.
-    return max(2, min(18, int(duration * 2.0 + 0.5)))
+    # Preserve complete meaning and short utterances. Timing compression is handled
+    # later by TTS; translation must never delete audible words to meet a tiny limit.
+    return max(4, min(28, int(duration * 3.2 + 2.0)))
 
 
 def khmer_word_count(text):
@@ -749,7 +765,7 @@ def repair_translation_items(client, model_name, uploaded_video, cues, items):
                 f'ID={cue["id"]} | MAX_WORDS={cue_word_limit(cue["start"], cue["end"])} | SOURCE={cue["source"]}'
                 for cue in group
             )
-            prompt = TRANSLATE_PROMPT + "\nIMPORTANT: These cues failed before. Translate EVERY cue fully into Khmer. Never copy Chinese characters.\n\nCUES:\n" + payload
+            prompt = TRANSLATE_PROMPT + "\nIMPORTANT: These cues failed before. Translate EVERY audible word, tiny response, negation, name, number, filler, and emotional reaction fully into natural Khmer. Never omit or summarize any element. Never copy Chinese characters.\n\nCUES:\n" + payload
             contents = [uploaded_video, prompt] if uploaded_video is not None else [prompt]
             response = gemini_generate_with_retry(client, model_name, contents)
             for row in parse_json_array(response.text or ""):
@@ -1201,13 +1217,15 @@ def create_mp3(srt_text, progress_callback=None):
             # Warm the voice and reduce breathy/airy high frequencies. Avoid
             # per-clip loudnorm because it can exaggerate breaths and thin consonants.
             parts.extend([
-                'highpass=f=55',
-                'lowpass=f=11000',
-                'equalizer=f=170:t=q:w=1.0:g=2.2',
-                'equalizer=f=320:t=q:w=1.1:g=1.2',
-                'equalizer=f=4200:t=q:w=1.2:g=-1.8',
-                'equalizer=f=7600:t=q:w=1.0:g=-2.6',
-                'acompressor=threshold=-18dB:ratio=1.65:attack=18:release=240:makeup=1.2:knee=3',
+                'highpass=f=60',
+                'lowpass=f=9200',
+                'equalizer=f=180:t=q:w=1.0:g=2.8',
+                'equalizer=f=360:t=q:w=1.1:g=1.6',
+                'equalizer=f=3200:t=q:w=1.2:g=-0.8',
+                'equalizer=f=6100:t=q:w=1.0:g=-3.8',
+                'equalizer=f=8200:t=q:w=1.0:g=-3.0',
+                'acompressor=threshold=-20dB:ratio=1.45:attack=22:release=280:makeup=1.1:knee=4',
+                'aecho=0.8:0.88:18:0.055',
                 f'afade=t=in:st=0:d={min(VOICE_FADE_IN_SECONDS, max(0.018, rendered_seconds * 0.12)):.3f}',
                 f'afade=t=out:st={max(0.02, rendered_seconds-min(VOICE_FADE_OUT_SECONDS, max(0.03, rendered_seconds * 0.15))):.3f}:d={min(VOICE_FADE_OUT_SECONDS, max(0.03, rendered_seconds * 0.15)):.3f}',
                 f'adelay={start_ms}|{start_ms}[{label}]',
@@ -1261,6 +1279,7 @@ def create_mp3(srt_text, progress_callback=None):
 # ─────────────────────────────────────────────────────────────────────────────
 LICENSE_DB_PATH = Path(__file__).with_name("licenses.db")
 SESSION_COOKIE_NAME = "ai_khemra_bro_customer_session"
+LOGIN_COOKIE_NAME = "ai_khemra_bro_saved_login"
 SESSION_IDLE_MINUTES = 30
 LOGIN_WINDOW_MINUTES = 15
 MAX_LOGIN_ATTEMPTS = 5
@@ -1497,6 +1516,40 @@ def _session_cookie_delete():
         pass
 
 
+def _saved_login_get():
+    """Return encrypted saved customer credentials for automatic login."""
+    try:
+        encrypted = cookie_manager.get(LOGIN_COOKIE_NAME)
+        if not encrypted:
+            return "", ""
+        payload = decrypt_api_keys(encrypted)
+        data = json.loads(payload)
+        return str(data.get("name", "")), str(data.get("code", ""))
+    except Exception:
+        return "", ""
+
+
+def _saved_login_set(name, code):
+    """Remember this customer's login on this browser until explicit logout."""
+    try:
+        payload = json.dumps({"name": str(name or ""), "code": str(code or "")}, ensure_ascii=False)
+        cookie_manager.set(
+            LOGIN_COOKIE_NAME,
+            encrypt_api_keys(payload),
+            expires_at=datetime.datetime.now() + datetime.timedelta(days=3650),
+            key="save_customer_login_cookie",
+        )
+    except Exception:
+        pass
+
+
+def _saved_login_delete():
+    try:
+        cookie_manager.delete(LOGIN_COOKIE_NAME, key="delete_customer_login_cookie")
+    except Exception:
+        pass
+
+
 def validate_customer_login(customer_name, access_code, existing_token="", acquire_session=False):
     """Validate a customer license without binding it to a device or browser.
 
@@ -1667,6 +1720,7 @@ def public_login_screen():
             ok, message, row, token = validate_customer_login(name, code, existing, acquire_session=True)
             if ok:
                 _session_cookie_set(token)
+                _saved_login_set(row["customer_name"], row["access_code_display"])
                 st.session_state.customer_authenticated = True
                 st.session_state.customer_name = row["customer_name"]
                 st.session_state.customer_code = row["access_code_display"]
@@ -1815,6 +1869,23 @@ if st.session_state.get("admin_gate_visible", False) or st.session_state.get("ad
     st.stop()
 
 if not st.session_state.get("customer_authenticated", False):
+    # Restore login automatically after refresh, phone restart, or app update.
+    saved_name, saved_code = _saved_login_get()
+    if saved_code:
+        existing_token = _session_cookie_get()
+        auto_ok, _, auto_row, auto_token = validate_customer_login(
+            saved_name, saved_code, existing_token, acquire_session=False
+        )
+        if auto_ok:
+            _session_cookie_set(auto_token)
+            st.session_state.customer_authenticated = True
+            st.session_state.customer_name = auto_row["customer_name"]
+            st.session_state.customer_code = auto_row["access_code_display"]
+            st.session_state.customer_session_token = auto_token
+            st.rerun()
+        else:
+            _saved_login_delete()
+            _session_cookie_delete()
     public_login_screen()
     st.stop()
 
@@ -1864,7 +1935,7 @@ for state_key, default_value in {
 with st.container(key="api_menu_container"):
     with st.popover("☰", help="API Key និងការកំណត់កម្មវិធី"):
         st.markdown("### 🔑 API Key និងការកំណត់")
-        st.caption("ទូរសព្ទ/Browser នីមួយៗមាន Session, API Key, Upload, SRT និង MP3 ដាច់ដោយឡែកពីគ្នា។")
+        st.caption("API Key ត្រូវបានអ៊ិនគ្រីប និងចងចាំក្នុង Browser នេះ។ Update/Restart កម្មវិធីក៏មិនបាត់ទេ លុះត្រាតែចុច «លុបសោ» ឬលុបទិន្នន័យ Browser។")
 
         st.text_area(
             "Gemini API Key",
