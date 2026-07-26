@@ -26,3 +26,11 @@ Keep API keys and passwords only in Streamlit Secrets. Do not commit them to Git
 ## Required Streamlit Secrets
 
 Keep the same secrets already used by your deployment. At minimum, configure the Gemini/API and owner/security values expected by `app.py`.
+
+
+## Version 3.0 audio changes
+- Locks every generated voice to the original SRT start timestamp.
+- Prevents generated speakers from overlapping each other.
+- Fits long lines into the available subtitle slot with controlled speed.
+- Reduces breathy/airy high frequencies.
+- Uses gentler per-clip processing and one final loudness master.
