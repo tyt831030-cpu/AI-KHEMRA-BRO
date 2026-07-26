@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "3.2"
+APP_VERSION = "5.3"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -2409,8 +2409,6 @@ if not login_ok:
     st.rerun()
 
 st.session_state.customer_session_token = current_token
-# Keep only the signed-in user label on the workspace.
-# The logout control is intentionally placed inside Settings below.
 st.caption(f"👤 {login_row['customer_name']}")
 
 # Read this browser's saved key once per Streamlit session.
@@ -2430,10 +2428,9 @@ for state_key, default_value in {
 
 with st.container(key="api_menu_container"):
     with st.popover("☰", help="API Key និងការកំណត់កម្មវិធី"):
-        st.markdown("### 🔑 API Key និងការកំណត់")
+        st.markdown("### ⚙️ ការកំណត់")
 
-        # Private subscription status: this information comes only from the
-        # currently authenticated license row. Other customers cannot see it.
+        # Private subscription status for the current authenticated customer.
         private_expiry = _parse_iso(login_row["expires_at"]).astimezone()
         private_plan = str(dict(login_row).get("plan_label") or "កញ្ចប់សមាជិក")
         private_now = _utcnow()
@@ -2458,61 +2455,54 @@ with st.container(key="api_menu_container"):
         )
         st.toggle("📶 4G Lite Mode", key="lite_mode")
 
-        # API controls stay at the bottom of Settings and use a compact layout.
+        # API management stays at the bottom of Settings so it never occupies
+        # the main translation workspace.
         st.divider()
-        with st.expander("🔑 Gemini API Key", expanded=False):
-            st.caption(
-                "API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នក។ "
-                "អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ។"
-            )
-            st.text_area(
-                "Gemini API Key",
-                height=72,
-                placeholder="AIza...",
-                key="api_keys_manager",
-                label_visibility="collapsed",
-                help="បើសោមួយ quota ពេញ App នឹងសាកសោបន្ទាប់។",
-            )
+        st.markdown("#### 🔑 Gemini API Key")
+        st.caption(
+            "API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នក។ "
+            "អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ។"
+        )
+        st.text_area(
+            "Gemini API Key",
+            height=76,
+            placeholder="AIza...",
+            key="api_keys_manager",
+            label_visibility="collapsed",
+            help="បើសោមួយ quota ពេញ App នឹងសាកសោបន្ទាប់។",
+        )
 
-            save_col, status_col = st.columns([1.15, 1])
-            with save_col:
-                if st.button("💾 រក្សាទុក", key="save_api_keys", use_container_width=True):
-                    entered_keys = [
-                        line.strip()
-                        for line in st.session_state.api_keys_manager.splitlines()
-                        if line.strip()
-                    ]
-                    if entered_keys:
-                        save_private_api_keys(st.session_state.api_keys_manager)
-                        st.session_state.api_saved_notice = True
-                        st.rerun()
-                    else:
-                        st.warning("សូមបញ្ចូល API Key ជាមុន។")
-
-            current_keys = [
+        if st.button("💾 រក្សាទុក API Key", key="save_api_keys", use_container_width=True):
+            entered_keys = [
                 line.strip()
-                for line in st.session_state.get("api_keys_manager", "").splitlines()
+                for line in st.session_state.api_keys_manager.splitlines()
                 if line.strip()
             ]
-            with status_col:
-                if current_keys:
-                    st.success(f"✅ {len(current_keys)} Key")
-                else:
-                    st.info("មិនទាន់មាន Key")
-
-            if current_keys:
-                st.caption("🔒 បានរក្សាទុកជាមួយគណនីអ្នក។")
-
-        # Small logout button at the very bottom of Settings.
-        logout_left, logout_right = st.columns([2.2, 1])
-        with logout_right:
-            if st.button("ចាកចេញ", key="customer_logout", use_container_width=True):
-                release_customer_session(st.session_state.get("customer_code", ""), current_token)
-                _session_cookie_delete()
-                clear_private_user_session()
-                for key in ("customer_authenticated", "customer_name", "customer_code", "customer_session_token"):
-                    st.session_state.pop(key, None)
+            if entered_keys:
+                save_private_api_keys(st.session_state.api_keys_manager)
+                st.session_state.api_saved_notice = True
                 st.rerun()
+            else:
+                st.warning("សូមបញ្ចូល API Key ជាមុន។")
+
+        current_keys = [
+            line.strip()
+            for line in st.session_state.get("api_keys_manager", "").splitlines()
+            if line.strip()
+        ]
+        if current_keys:
+            st.success(f"✅ API Key ត្រៀមប្រើ៖ {len(current_keys)}")
+        else:
+            st.caption("មិនទាន់មាន API Key។ អ្នកនៅតែអាចបើកមើលកម្មវិធីបាន។")
+
+        st.divider()
+        if st.button("ចាកចេញ", key="customer_logout", use_container_width=True):
+            release_customer_session(st.session_state.get("customer_code", ""), current_token)
+            _session_cookie_delete()
+            clear_private_user_session()
+            for key in ("customer_authenticated", "customer_name", "customer_code", "customer_session_token"):
+                st.session_state.pop(key, None)
+            st.rerun()
 
 api_keys_text = st.session_state.get("api_keys_manager", "")
 valid_api_keys = [line.strip() for line in api_keys_text.splitlines() if line.strip()]
@@ -2523,11 +2513,7 @@ lite_mode = st.session_state.lite_mode
 max_mb = 60 if lite_mode else 150
 
 if not valid_api_keys:
-    st.error(
-        "🔐 កម្មវិធីមិនអាចដំណើរការបានទេ ព្រោះមិនទាន់មាន Gemini API Key។ "
-        "សូមចុចប៊ូតុង ☰ បញ្ចូល API Key ហើយចុច «រក្សាទុក API Key»។"
-    )
-    st.stop()
+    st.warning("🔐 មិនទាន់មាន Gemini API Key — សូមបញ្ចូលក្នុង ☰ Settings ដើម្បីប្រើមុខងារ AI។")
 
 st.markdown(
     '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
