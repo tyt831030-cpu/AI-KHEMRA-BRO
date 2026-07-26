@@ -1,26 +1,37 @@
-# AI KHEMRA BRO
+# AI KHEMRA BRO — Full UI + Private Admin
 
-Streamlit app with customer login and a hidden admin license dashboard.
+This build keeps the full original UI and features from `app(28).py` and adds private customer licensing.
 
-## Included
-- Customer login: name + access code
-- Automatic access-code generation
-- License durations: 7 days, 30 days, 365 days
-- Automatic expiry checks
-- Renew, block/unblock, and delete licenses
-- Existing Video → Khmer SRT → MP3 features retained
+## Public customer flow
+- Customer enters registered name and Access Code.
+- Valid, active, unexpired licenses unlock the full Video → SRT → MP3 application.
+- Expired, blocked, or invalid licenses are rejected automatically.
 
-## Streamlit Secrets
-Add these in Streamlit Community Cloud: App settings → Secrets.
+## Private owner flow
+1. On the customer login screen, tap the small `✦` control at the top-right five times.
+2. Enter the owner name and password.
+3. Create customer codes for 7 days, 30 days, or 365 days.
+4. Renew, block/unblock, or delete customer codes.
+
+## Streamlit Secrets (recommended)
+Add these in Streamlit Cloud → App settings → Secrets:
 
 ```toml
-ADMIN_PASSWORD = "CHANGE_THIS_TO_YOUR_PRIVATE_PASSWORD"
-COOKIE_SECRET = "CHANGE_THIS_TO_A_LONG_RANDOM_SECRET"
+ADMIN_USERNAME = "KHEMRA"
+ADMIN_PASSWORD = "YOUR_PRIVATE_PASSWORD"
+COOKIE_SECRET = "A-LONG-RANDOM-PRIVATE-SECRET"
 ```
 
-## Admin access
-Open the normal app URL and add `?admin=1` to the end.
-Example: `https://your-app.streamlit.app/?admin=1`
+The file contains the requested initial fallback credentials so it can run immediately. Using Streamlit Secrets is safer because public GitHub source can be viewed.
 
-## Important database note
-The app automatically creates `licenses.db`. Local SQLite storage may reset after a Streamlit Community Cloud restart or redeploy. For permanent commercial use, migrate license records to Supabase/PostgreSQL.
+## Install
+Upload these four files to the root of the existing GitHub repository:
+- `app.py`
+- `requirements.txt`
+- `packages.txt`
+- `README.md`
+
+Set the Streamlit main file path to `app.py`.
+
+## Database note
+`licenses.db` is created automatically. Streamlit Community Cloud local files may reset after restart/redeploy. For long-term paid use, move licenses to Supabase/PostgreSQL.
