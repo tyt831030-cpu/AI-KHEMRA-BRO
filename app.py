@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "2.2"
+APP_VERSION = "2.5"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -287,23 +287,23 @@ SREYMOM='km-KH-SreymomNeural'
 VOICE_PROFILES={
 # Warm, natural profiles. Large pitch boosts make Khmer Neural voices thin/airy,
 # so age differences use mostly rate and only a very small pitch movement.
-'BOY':{'voice':PISITH,'rate':'+1%','pitch':'+1Hz','volume':'+4%'},
-'GIRL':{'voice':SREYMOM,'rate':'+1%','pitch':'+1Hz','volume':'+4%'},
-'M_YOUNG':{'voice':PISITH,'rate':'-1%','pitch':'+0Hz','volume':'+4%'},
-'F_YOUNG':{'voice':SREYMOM,'rate':'-1%','pitch':'+0Hz','volume':'+4%'},
-'M_ADULT':{'voice':PISITH,'rate':'-2%','pitch':'+0Hz','volume':'+4%'},
-'F_ADULT':{'voice':SREYMOM,'rate':'-2%','pitch':'+0Hz','volume':'+4%'},
-'M_OLD':{'voice':PISITH,'rate':'-7%','pitch':'-3Hz','volume':'+7%'},
-'F_OLD':{'voice':SREYMOM,'rate':'-7%','pitch':'-3Hz','volume':'+7%'},
-'M_THINK':{'voice':PISITH,'rate':'-5%','pitch':'-1Hz','volume':'+4%'},
-'F_THINK':{'voice':SREYMOM,'rate':'-5%','pitch':'-1Hz','volume':'+4%'},
-'NARRATOR_M':{'voice':PISITH,'rate':'-4%','pitch':'-1Hz','volume':'+7%'},
-'NARRATOR_F':{'voice':SREYMOM,'rate':'-4%','pitch':'-1Hz','volume':'+7%'},
+'BOY':{'voice':PISITH,'rate':'+0%','pitch':'+0Hz','volume':'+5%'},
+'GIRL':{'voice':SREYMOM,'rate':'+0%','pitch':'+0Hz','volume':'+5%'},
+'M_YOUNG':{'voice':PISITH,'rate':'-2%','pitch':'-1Hz','volume':'+6%'},
+'F_YOUNG':{'voice':SREYMOM,'rate':'-2%','pitch':'-1Hz','volume':'+6%'},
+'M_ADULT':{'voice':PISITH,'rate':'-3%','pitch':'-2Hz','volume':'+7%'},
+'F_ADULT':{'voice':SREYMOM,'rate':'-3%','pitch':'-1Hz','volume':'+7%'},
+'M_OLD':{'voice':PISITH,'rate':'-8%','pitch':'-5Hz','volume':'+8%'},
+'F_OLD':{'voice':SREYMOM,'rate':'-8%','pitch':'-3Hz','volume':'+8%'},
+'M_THINK':{'voice':PISITH,'rate':'-5%','pitch':'-2Hz','volume':'+6%'},
+'F_THINK':{'voice':SREYMOM,'rate':'-5%','pitch':'-1Hz','volume':'+6%'},
+'NARRATOR_M':{'voice':PISITH,'rate':'-5%','pitch':'-3Hz','volume':'+8%'},
+'NARRATOR_F':{'voice':SREYMOM,'rate':'-5%','pitch':'-2Hz','volume':'+8%'},
 # Backward-compatible labels for older SRT files.
-'M':{'voice':PISITH,'rate':'-3%','pitch':'+0Hz','volume':'+6%'},
-'F':{'voice':SREYMOM,'rate':'-3%','pitch':'+0Hz','volume':'+6%'},
-'OLD_M':{'voice':PISITH,'rate':'-7%','pitch':'-3Hz','volume':'+7%'},
-'OLD_F':{'voice':SREYMOM,'rate':'-7%','pitch':'-3Hz','volume':'+7%'}
+'M':{'voice':PISITH,'rate':'-3%','pitch':'-2Hz','volume':'+7%'},
+'F':{'voice':SREYMOM,'rate':'-3%','pitch':'-1Hz','volume':'+7%'},
+'OLD_M':{'voice':PISITH,'rate':'-8%','pitch':'-5Hz','volume':'+8%'},
+'OLD_F':{'voice':SREYMOM,'rate':'-8%','pitch':'-3Hz','volume':'+8%'}
 }
 
 # Smooth-dubbing controls: gentle fades remove clicks/cuts when speaker labels change.
@@ -343,7 +343,11 @@ PROFESSIONAL KHMER TRANSLATION RULES:
 - Use conversational sentence order and natural responses such as “អញ្ចឹងមែន?”, “បានហើយ”, “មិនអីទេ”, “តើមានរឿងអី?”, or similar only when they accurately match the source meaning and scene.
 - Choose pronouns and forms of address that fit age, gender, rank, relationship, and scene context, such as: បង/អូន, ខ្ញុំ/លោក, ឯង/អញ, ពួកម៉ាក, សម្លាញ់, លោកគ្រូ, សិស្ស, ព្រះអង្គ, អធិរាជ, ម្ចាស់, មេទ័ព, លោកតា, លោកយាយ.
 - Use natural Khmer emotion particles only when suitable, for example: ណា, ណ៎, ចា៎, ចុះ, អញ្ចឹង, ហ្នឹង, មែនទេ, វើយ, ហ្មង, ហាស, អូហ៍.
-- Do not overuse slang, insults, or particles. Match the actor's personality and the scene.
+- FACEBOOK-SAFE LANGUAGE MODE IS ALWAYS ON: do not output profanity, obscene expressions, sexual insults, degrading slurs, hateful language, direct humiliation, or unnecessarily graphic wording.
+- When the source contains rude or offensive speech, keep the intention and emotion but replace it with a clean, natural Khmer expression suitable for a general Facebook audience. For example, use context-appropriate clean phrases such as «មនុស្សអាក្រក់», «ឈប់និយាយទៅ», «កុំធ្វើបែបនេះ», «គួរឱ្យខឹងមែន», or «ចេញទៅ» instead of reproducing vulgar wording.
+- Do not sanitize so aggressively that the plot meaning disappears. Preserve whether the speaker is angry, threatening, mocking, shocked, or rejecting someone, but express it without offensive vocabulary.
+- Never create insults that were not present in the source. Never target protected characteristics, disability, appearance, family members, or private sexual matters.
+- Do not overuse slang, insults, or particles. Match the actor's personality and the scene while keeping the wording clean enough for a broad Facebook audience.
 - For historical, cultivation, martial-arts, palace, fantasy, or modern-drama terms, choose Khmer wording that viewers understand while keeping names and ranks consistent.
 - If a source phrase contains an idiom, joke, hidden meaning, or wordplay, recreate the intended effect naturally in Khmer instead of translating the literal words.
 - Do not leave Chinese characters, pinyin, English explanation, translator notes, or brackets inside the Khmer dialogue.
@@ -370,8 +374,11 @@ KHMER DUBBING QUALITY RULES:
 - The final dialogue should sound as if it was originally written and performed in Khmer.
 - Before returning each subtitle, silently ask: “Would a Cambodian naturally say this in a real conversation or movie?” If not, rewrite it.
 
-SUBTITLE LENGTH RULES:
-- Each cue includes MAX_WORDS. The Khmer text MUST stay at or below that word limit.
+STRICT TIMING AND SUBTITLE LENGTH RULES:
+- The supplied start and end timestamp of every cue is locked. Never move dialogue earlier or later, never borrow time from another cue, and never merge or split cues.
+- Each cue includes MAX_WORDS. The Khmer text MUST stay at or below that word limit so the generated voice can finish inside its own timestamp.
+- Start speaking at the cue start and finish before the cue end. Do not let one character's voice overlap the next cue unless the original timestamps themselves overlap.
+- Shorten only by choosing concise natural Khmer wording; never delete a meaning-bearing word, negation, name, number, command, response, or audible reaction.
 - Cut and reshape the translation so it fits the subtitle time and can be spoken comfortably before the cue ends.
 - Prefer one short, clear, natural spoken sentence per cue.
 - Keep the complete meaning and emotional force. Never remove an audible word merely because it is short, repeated, a filler, a reaction, or difficult to fit. Use concise Khmer wording while preserving it.
@@ -385,6 +392,8 @@ MANDATORY NO-SKIP RULES:
 - Do not summarize two clauses into one if that removes information.
 - If the source is very short, return a correspondingly short Khmer utterance rather than deleting it.
 - Recheck each cue against SOURCE before output: every audible element must be represented in Khmer.
+- Final safety check for every cue: remove or rewrite any vulgar, obscene, hateful, sexually insulting, or degrading word into clean natural Khmer while preserving the scene's meaning and emotion.
+- Final timing check for every cue: wording must be speakable within that cue's exact duration without rushing, dragging, starting early, or finishing late.
 
 OUTPUT RULES:
 - Return exactly one object for every supplied cue ID, in the same order.
@@ -410,7 +419,7 @@ Rules:
 - Rewrite Khmer into fluent, natural everyday Cambodian dialogue suitable for professional movie dubbing; never use stiff word-for-word or book-like phrasing.
 - Read each Khmer line as spoken dialogue: if a Cambodian would not normally say it that way, rewrite it using shorter and more familiar wording.
 - Respect each cue's MAX_WORDS strictly so dubbing can play at a normal pace.
-- Preserve meaning and emotion but remove repeated subjects, explanatory wording, filler, and unnecessary words.
+- Preserve every spoken meaning, including short replies, particles, hesitation sounds, repeated words, names, negations, and small expressions. Never delete a cue or omit a spoken word merely to shorten it; shorten only by natural Khmer rephrasing without information loss.
 - JSON only. No explanations or markdown.
 """
 
@@ -454,19 +463,76 @@ def decrypt_api_keys(cookie_value):
         return ""
 
 
-def load_private_api_keys():
-    """Read only this browser/device's encrypted API-key cookie."""
+def _current_customer_code():
+    """Return the authenticated customer's normalized access code."""
     try:
-        return decrypt_api_keys(cookie_manager.get(API_COOKIE_NAME))
+        return normalize_access_code(st.session_state.get("customer_code", ""))
+    except Exception:
+        return str(st.session_state.get("customer_code", "") or "").strip().upper()
+
+
+def _load_api_keys_from_account():
+    """Load encrypted API keys from the persistent customer account database."""
+    code = _current_customer_code()
+    if not code:
+        return ""
+    try:
+        with license_connection() as connection:
+            row = connection.execute(
+                "SELECT saved_api_keys_encrypted FROM licenses "
+                "WHERE access_code_hash=? OR access_code_display=?",
+                (_hash_code(code), code),
+            ).fetchone()
+        if not row:
+            return ""
+        return decrypt_api_keys(row["saved_api_keys_encrypted"] or "")
     except Exception:
         return ""
 
 
-def save_private_api_keys(api_keys_text):
-    """Persist encrypted API keys in this browser/device until Delete is pressed."""
+def _save_api_keys_to_account(api_keys_text):
+    """Save encrypted API keys against the signed-in account, not only Safari."""
+    code = _current_customer_code()
+    if not code:
+        return False
     cleaned = "\n".join(
-        line.strip() for line in api_keys_text.splitlines() if line.strip()
+        line.strip() for line in str(api_keys_text or "").splitlines() if line.strip()
     )
+    encrypted = encrypt_api_keys(cleaned) if cleaned else ""
+    try:
+        with license_connection() as connection:
+            connection.execute(
+                "UPDATE licenses SET saved_api_keys_encrypted=? "
+                "WHERE access_code_hash=? OR access_code_display=?",
+                (encrypted, _hash_code(code), code),
+            )
+            connection.commit()
+        return True
+    except Exception:
+        return False
+
+
+def load_private_api_keys():
+    """Load from the account database first; Safari cookie is only a fallback."""
+    account_keys = _load_api_keys_from_account()
+    if account_keys:
+        return account_keys
+    try:
+        browser_keys = decrypt_api_keys(cookie_manager.get(API_COOKIE_NAME))
+    except Exception:
+        browser_keys = ""
+    # Migrate an old browser-only saved key into the signed-in account.
+    if browser_keys:
+        _save_api_keys_to_account(browser_keys)
+    return browser_keys
+
+
+def save_private_api_keys(api_keys_text):
+    """Persist keys in the customer account DB and also keep a browser fallback."""
+    cleaned = "\n".join(
+        line.strip() for line in str(api_keys_text or "").splitlines() if line.strip()
+    )
+    saved_to_account = _save_api_keys_to_account(cleaned)
     try:
         if cleaned:
             cookie_manager.set(
@@ -478,20 +544,26 @@ def save_private_api_keys(api_keys_text):
         else:
             cookie_manager.delete(API_COOKIE_NAME, key="delete_private_api_cookie")
     except Exception:
-        # Session state still keeps the key private for the active user session.
         pass
+    return saved_to_account
 
+
+def delete_private_api_keys():
+    """Delete the key only when the user explicitly presses Delete Key."""
+    _save_api_keys_to_account("")
+    try:
+        cookie_manager.delete(API_COOKIE_NAME, key="delete_private_api_cookie_explicit")
+    except Exception:
+        pass
 
 def api_keys_changed():
     save_private_api_keys(st.session_state.get("api_keys_manager", ""))
 
 
-def clear_private_user_session():
-    """Remove only the current user's key and working files/state."""
-    try:
-        cookie_manager.delete(API_COOKIE_NAME, key="logout_private_api_cookie")
-    except Exception:
-        pass
+def clear_private_user_session(delete_saved_api=False):
+    """Clear temporary work. Saved API key is removed only by the Delete button."""
+    if delete_saved_api:
+        delete_private_api_keys()
     for state_key in (
         "api_keys_manager",
         "srt_text",
@@ -1217,15 +1289,25 @@ def create_mp3(srt_text, progress_callback=None):
             # Warm the voice and reduce breathy/airy high frequencies. Avoid
             # per-clip loudnorm because it can exaggerate breaths and thin consonants.
             parts.extend([
-                'highpass=f=60',
-                'lowpass=f=9200',
-                'equalizer=f=180:t=q:w=1.0:g=2.8',
-                'equalizer=f=360:t=q:w=1.1:g=1.6',
-                'equalizer=f=3200:t=q:w=1.2:g=-0.8',
-                'equalizer=f=6100:t=q:w=1.0:g=-3.8',
-                'equalizer=f=8200:t=q:w=1.0:g=-3.0',
-                'acompressor=threshold=-20dB:ratio=1.45:attack=22:release=280:makeup=1.1:knee=4',
-                'aecho=0.8:0.88:18:0.055',
+                # Voice body: keep useful bass/low-mid energy, remove airy highs,
+                # and avoid echo/reverb because it makes Khmer TTS sound hollow.
+                # Facebook-ready speech master: remove rumble and airy hiss,
+                # retain body, then add a controlled presence boost so Khmer
+                # consonants remain intelligible after social-media transcoding.
+                'highpass=f=68:p=2',
+                'lowpass=f=8200:p=2',
+                'equalizer=f=150:t=q:w=1.0:g=1.4',
+                'equalizer=f=260:t=q:w=1.0:g=1.8',
+                'equalizer=f=520:t=q:w=1.1:g=0.8',
+                'equalizer=f=1200:t=q:w=1.2:g=1.0',
+                'equalizer=f=2200:t=q:w=1.1:g=2.0',
+                'equalizer=f=3400:t=q:w=1.0:g=1.4',
+                'equalizer=f=5000:t=q:w=1.0:g=-2.2',
+                'equalizer=f=6500:t=q:w=0.9:g=-3.8',
+                'equalizer=f=7800:t=q:w=0.8:g=-2.8',
+                'acompressor=threshold=-24dB:ratio=2.10:attack=12:release=180:makeup=1.22:knee=4',
+                'alimiter=limit=0.96:attack=6:release=90',
+                'volume=1.04',
                 f'afade=t=in:st=0:d={min(VOICE_FADE_IN_SECONDS, max(0.018, rendered_seconds * 0.12)):.3f}',
                 f'afade=t=out:st={max(0.02, rendered_seconds-min(VOICE_FADE_OUT_SECONDS, max(0.03, rendered_seconds * 0.15))):.3f}:d={min(VOICE_FADE_OUT_SECONDS, max(0.03, rendered_seconds * 0.15)):.3f}',
                 f'adelay={start_ms}|{start_ms}[{label}]',
@@ -1243,8 +1325,8 @@ def create_mp3(srt_text, progress_callback=None):
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'alimiter=limit=0.94:attack=10:release=180,'
-              'loudnorm=I=-15:TP=-1.2:LRA=9,'
+              'alimiter=limit=0.95:attack=8:release=140,'
+              'loudnorm=I=-16.0:TP=-1.5:LRA=7,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
@@ -1252,9 +1334,13 @@ def create_mp3(srt_text, progress_callback=None):
         command.extend([
             '-filter_complex', ';'.join(filters),
             '-map', '[out]',
+            '-c:a', 'libmp3lame',
             '-ac', '2',
             '-ar', '48000',
             '-b:a', '192k',
+            '-minrate', '192k',
+            '-maxrate', '192k',
+            '-bufsize', '384k',
             str(output),
         ])
 
@@ -1359,6 +1445,7 @@ def initialize_license_database():
         _ensure_column(connection, "licenses", "active_session_hash", "TEXT")
         _ensure_column(connection, "licenses", "active_session_last_seen", "TEXT")
         _ensure_column(connection, "licenses", "created_card_until", "TEXT")
+        _ensure_column(connection, "licenses", "saved_api_keys_encrypted", "TEXT")
         old_columns = {row["name"] for row in connection.execute("PRAGMA table_info(licenses)")}
         if "access_code" in old_columns:
             rows = connection.execute(
@@ -1935,7 +2022,7 @@ for state_key, default_value in {
 with st.container(key="api_menu_container"):
     with st.popover("☰", help="API Key និងការកំណត់កម្មវិធី"):
         st.markdown("### 🔑 API Key និងការកំណត់")
-        st.caption("API Key ត្រូវបានអ៊ិនគ្រីប និងចងចាំក្នុង Browser នេះ។ Update/Restart កម្មវិធីក៏មិនបាត់ទេ លុះត្រាតែចុច «លុបសោ» ឬលុបទិន្នន័យ Browser។")
+        st.caption("API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នកក្នុង Database។ បិទទូរសព្ទ បិទ Safari ឬ Update/Restart កម្មវិធីក៏មិនបាត់ទេ។ វាបាត់តែពេលចុច «លុបសោ»។")
 
         st.text_area(
             "Gemini API Key",
@@ -1962,7 +2049,7 @@ with st.container(key="api_menu_container"):
 
         with logout_col:
             if st.button("🗑️ លុបសោ", key="remove_api_keys", use_container_width=True):
-                clear_private_user_session()
+                clear_private_user_session(delete_saved_api=True)
                 st.rerun()
 
         current_keys = [
@@ -1972,7 +2059,7 @@ with st.container(key="api_menu_container"):
         ]
         if current_keys:
             st.success(f"✅ API Key ត្រៀមប្រើ៖ {len(current_keys)} • Auto rotation")
-            st.caption("🔒 បានអ៊ិនគ្រីប និងរក្សាទុកជាប់សម្រាប់ Browser/ទូរសព្ទនេះ។ សោនឹងបាត់តែពេលអ្នកចុច «លុបសោ» ឬលុបទិន្នន័យ Browser ដោយខ្លួនឯង។")
+            st.caption("🔒 បានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នក។ បិទទូរសព្ទ ឬ Update កម្មវិធីក៏មិនបាត់ទេ។")
         else:
             st.info("បញ្ចូល API Key រួចចុច «រក្សាទុក»។")
 
@@ -2268,7 +2355,7 @@ with tab_video:
 
 with tab_translate:
     st.header("AI Subtitle Translator")
-    st.info("បិទភ្ជាប់ Chinese SRT ហើយបកប្រែទៅ Khmer SRT។")
+    st.info("បិទភ្ជាប់ Chinese SRT ហើយបកប្រែទៅ Khmer SRT ជាភាសាខ្មែរធម្មជាតិ ស្អាតសម្រាប់ទស្សនិកជនទូទៅ និងរក្សា timestamp ដើម។")
     source_srt = st.text_area("Chinese SRT", height=300, key="translator_source")
     if st.button("🌐 Translate to Khmer", key="translate_btn"):
         if not source_srt.strip():
