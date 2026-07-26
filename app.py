@@ -279,6 +279,120 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
   .st-key-srt_actions button{height:46px!important;min-height:46px!important;font-size:12px!important}
 }
 
+
+/* ───────────── Login screen v3.0 — mobile layout matching the approved sample ───────────── */
+.st-key-public_login_wrap{
+  width:min(100%,760px)!important;
+  margin:0 auto!important;
+}
+.st-key-public_login_wrap [data-testid="stMarkdownContainer"] h3{
+  color:#ffc400!important;
+  font-size:clamp(28px,7vw,43px)!important;
+  font-weight:950!important;
+  margin:18px 0 12px!important;
+  line-height:1.2!important;
+}
+.st-key-customer_login_box{
+  border:1px solid #1f2937!important;
+  border-radius:16px!important;
+  padding:18px 20px 16px!important;
+  background:rgba(7,12,20,.42)!important;
+}
+.st-key-customer_login_box label,
+.st-key-customer_login_box label p{
+  color:#ffb000!important;
+  font-weight:850!important;
+  font-size:17px!important;
+}
+.st-key-customer_login_box input{
+  min-height:58px!important;
+  border-radius:12px!important;
+  background:#f3f4f6!important;
+  color:#20242e!important;
+  border:1px solid #d1d5db!important;
+  font-size:18px!important;
+}
+.st-key-customer_login_box input::placeholder{
+  color:#8b8f99!important;
+  opacity:1!important;
+}
+.st-key-customer_login_box [data-testid="stFormSubmitButton"] button{
+  min-height:58px!important;
+  margin-top:10px!important;
+  border-radius:12px!important;
+  border:1px solid #ffd84d!important;
+  background:linear-gradient(90deg,#ffab00 0%,#ffd600 100%)!important;
+  color:#ffffff!important;
+  font-weight:950!important;
+  font-size:18px!important;
+  text-shadow:0 1px 2px rgba(0,0,0,.28)!important;
+  box-shadow:0 8px 22px rgba(255,179,0,.20)!important;
+}
+.st-key-customer_login_box [data-testid="stFormSubmitButton"] button p{
+  color:#ffffff!important;
+  font-weight:950!important;
+}
+.social-split{
+  width:100%;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:1px;
+  padding:7px;
+  margin:12px 0 0;
+  border:2px solid #f5b400;
+  border-radius:16px;
+  overflow:hidden;
+  background:#f5b400;
+  box-sizing:border-box;
+}
+.social-split a{
+  min-width:0;
+  min-height:76px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:12px;
+  color:#fff!important;
+  text-decoration:none!important;
+  font-size:clamp(16px,4vw,25px);
+  font-weight:900;
+  line-height:1;
+  box-sizing:border-box;
+  -webkit-tap-highlight-color:transparent;
+}
+.social-split a:first-child{
+  border-radius:10px 0 0 10px;
+  background:linear-gradient(135deg,#1265e8,#2f8df5);
+}
+.social-split a:last-child{
+  border-radius:0 10px 10px 0;
+  background:linear-gradient(135deg,#1aaee8,#36c9ef);
+}
+.social-split a:active{filter:brightness(.92);transform:scale(.995)}
+.social-icon{
+  width:42px;height:42px;flex:0 0 42px;
+  display:inline-flex;align-items:center;justify-content:center;
+  border-radius:50%;background:#fff;color:#1877f2;
+  font-size:29px;font-weight:950;font-family:Arial,sans-serif;
+}
+.social-split a:last-child .social-icon{
+  color:#229ed9;font-size:24px;transform:rotate(-8deg);
+}
+.login-help{
+  margin:20px 2px 0;
+  color:#a7adb7;
+  font-size:clamp(15px,3.8vw,20px);
+  line-height:1.65;
+}
+.login-help strong{color:#ffc400}
+@media(max-width:700px){
+  .st-key-public_login_wrap{width:100%!important}
+  .st-key-customer_login_box{padding:16px 14px 14px!important}
+  .social-split{padding:5px;border-radius:14px}
+  .social-split a{min-height:64px;gap:8px}
+  .social-icon{width:37px;height:37px;flex-basis:37px;font-size:25px}
+}
+
 </style>
 ''', unsafe_allow_html=True)
 
@@ -1887,17 +2001,38 @@ def hidden_owner_trigger():
 
 
 def public_login_screen():
-    st.markdown('<div class="hero"><h1>AI KHEMRA BRO</h1><p>PRIVATE CUSTOMER ACCESS</p></div>', unsafe_allow_html=True)
-    left, center, right = st.columns([1, 1.25, 1])
-    with center:
+    st.markdown(
+        '<div class="hero"><h1>AI KHEMRA BRO</h1><p>PRIVATE CUSTOMER ACCESS</p></div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.container(key="public_login_wrap"):
         st.markdown("### 🔐 ចូលប្រើកម្មវិធី")
-        with st.form("customer_login_form", clear_on_submit=False):
-            name = st.text_input("ឈ្មោះ (មិនបាច់បញ្ចូលក៏បាន)", placeholder="អាចទុកទទេបាន")
-            code = st.text_input("Access Code", placeholder="KHBR-XXXX-XXXX", type="password")
-            submitted = st.form_submit_button("ចូលប្រើកម្មវិធី", use_container_width=True)
+
+        with st.container(key="customer_login_box"):
+            with st.form("customer_login_form", clear_on_submit=False):
+                name = st.text_input(
+                    "ឈ្មោះ៖ (មិនចាំបាច់បញ្ចូលក៏បាន)",
+                    placeholder="អាចទុកទទេបាន",
+                )
+                code = st.text_input(
+                    "Access Code",
+                    placeholder="KHBR-XXXX-XXXX",
+                    type="password",
+                )
+                submitted = st.form_submit_button(
+                    "ចូលប្រើកម្មវិធី",
+                    use_container_width=True,
+                )
+
         if submitted:
             existing = _session_cookie_get()
-            ok, message, row, token = validate_customer_login(name, code, existing, acquire_session=True)
+            ok, message, row, token = validate_customer_login(
+                name,
+                code,
+                existing,
+                acquire_session=True,
+            )
             if ok:
                 _session_cookie_set(token)
                 _saved_login_set(row["customer_name"], row["access_code_display"])
@@ -1908,13 +2043,29 @@ def public_login_screen():
                 st.rerun()
             else:
                 st.error(message)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.link_button("📘 Facebook",'https://www.facebook.com/Khrmra?mibextid=wwXIfr&mibextid=wwXIfr',use_container_width=True)
-        with c2:
-            st.link_button("✈️ Telegram",'https://t.me/+VC_6B66uwH5hMDE9',use_container_width=True)
 
-        st.caption("សូមទាក់ទង Owner ដើម្បីទទួល Access Code")
+        # Real clickable links: one locked 50% / 50% row on every phone size.
+        st.markdown(
+            """
+            <div class="social-split">
+              <a href="https://www.facebook.com/Khrmra?mibextid=wwXIfr&mibextid=wwXIfr" target="_blank" rel="noopener noreferrer"
+                 aria-label="Open KHEMRA Facebook">
+                <span class="social-icon">f</span>
+                <span>Facebook</span>
+              </a>
+              <a href="https://t.me/+VC_6B66uwH5hMDE9" target="_blank" rel="noopener noreferrer"
+                 aria-label="Open KHEMRA Telegram">
+                <span class="social-icon">➤</span>
+                <span>Telegram</span>
+              </a>
+            </div>
+            <div class="login-help">
+              សូមទាក់ទង Owner ដើម្បីទទួល <strong>Access Code</strong>
+              សម្រាប់ចូលប្រើកម្មវិធី។
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def _copy_card(name, code, expires_text):
