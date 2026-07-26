@@ -285,29 +285,30 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
 PISITH='km-KH-PisethNeural'
 SREYMOM='km-KH-SreymomNeural'
 VOICE_PROFILES={
-# Voice labels are separated by gender, age, narration, and inner thought.
-'BOY':{'voice':PISITH,'rate':'+2%','pitch':'+8Hz','volume':'+13%'},
-'GIRL':{'voice':SREYMOM,'rate':'+2%','pitch':'+9Hz','volume':'+13%'},
-'M_YOUNG':{'voice':PISITH,'rate':'-1%','pitch':'+3Hz','volume':'+12%'},
-'F_YOUNG':{'voice':SREYMOM,'rate':'-1%','pitch':'+4Hz','volume':'+12%'},
-'M_ADULT':{'voice':PISITH,'rate':'-3%','pitch':'+0Hz','volume':'+12%'},
-'F_ADULT':{'voice':SREYMOM,'rate':'-3%','pitch':'+0Hz','volume':'+12%'},
-'M_OLD':{'voice':PISITH,'rate':'-8%','pitch':'-6Hz','volume':'+13%'},
-'F_OLD':{'voice':SREYMOM,'rate':'-8%','pitch':'-5Hz','volume':'+13%'},
-'M_THINK':{'voice':PISITH,'rate':'-6%','pitch':'-2Hz','volume':'+9%'},
-'F_THINK':{'voice':SREYMOM,'rate':'-6%','pitch':'-2Hz','volume':'+9%'},
-'NARRATOR_M':{'voice':PISITH,'rate':'-4%','pitch':'-1Hz','volume':'+14%'},
-'NARRATOR_F':{'voice':SREYMOM,'rate':'-4%','pitch':'-1Hz','volume':'+14%'},
+# Warm, natural profiles. Large pitch boosts make Khmer Neural voices thin/airy,
+# so age differences use mostly rate and only a very small pitch movement.
+'BOY':{'voice':PISITH,'rate':'+2%','pitch':'+3Hz','volume':'+6%'},
+'GIRL':{'voice':SREYMOM,'rate':'+2%','pitch':'+3Hz','volume':'+6%'},
+'M_YOUNG':{'voice':PISITH,'rate':'-1%','pitch':'+1Hz','volume':'+6%'},
+'F_YOUNG':{'voice':SREYMOM,'rate':'-1%','pitch':'+1Hz','volume':'+6%'},
+'M_ADULT':{'voice':PISITH,'rate':'-3%','pitch':'+0Hz','volume':'+6%'},
+'F_ADULT':{'voice':SREYMOM,'rate':'-3%','pitch':'+0Hz','volume':'+6%'},
+'M_OLD':{'voice':PISITH,'rate':'-7%','pitch':'-3Hz','volume':'+7%'},
+'F_OLD':{'voice':SREYMOM,'rate':'-7%','pitch':'-3Hz','volume':'+7%'},
+'M_THINK':{'voice':PISITH,'rate':'-5%','pitch':'-1Hz','volume':'+4%'},
+'F_THINK':{'voice':SREYMOM,'rate':'-5%','pitch':'-1Hz','volume':'+4%'},
+'NARRATOR_M':{'voice':PISITH,'rate':'-4%','pitch':'-1Hz','volume':'+7%'},
+'NARRATOR_F':{'voice':SREYMOM,'rate':'-4%','pitch':'-1Hz','volume':'+7%'},
 # Backward-compatible labels for older SRT files.
-'M':{'voice':PISITH,'rate':'-3%','pitch':'+0Hz','volume':'+12%'},
-'F':{'voice':SREYMOM,'rate':'-3%','pitch':'+0Hz','volume':'+12%'},
-'OLD_M':{'voice':PISITH,'rate':'-8%','pitch':'-6Hz','volume':'+13%'},
-'OLD_F':{'voice':SREYMOM,'rate':'-8%','pitch':'-5Hz','volume':'+13%'}
+'M':{'voice':PISITH,'rate':'-3%','pitch':'+0Hz','volume':'+6%'},
+'F':{'voice':SREYMOM,'rate':'-3%','pitch':'+0Hz','volume':'+6%'},
+'OLD_M':{'voice':PISITH,'rate':'-7%','pitch':'-3Hz','volume':'+7%'},
+'OLD_F':{'voice':SREYMOM,'rate':'-7%','pitch':'-3Hz','volume':'+7%'}
 }
 
 # Smooth-dubbing controls: gentle fades remove clicks/cuts when speaker labels change.
-VOICE_FADE_IN_SECONDS = 0.075
-VOICE_FADE_OUT_SECONDS = 0.110
+VOICE_FADE_IN_SECONDS = 0.045
+VOICE_FADE_OUT_SECONDS = 0.070
 MIN_VOICE_GAP_MS = 12
 MAX_TEMPO_SPEED = 1.28
 
@@ -1197,13 +1198,18 @@ def create_mp3(srt_text, progress_callback=None):
 
             # Normalize every voice clip before mixing so quiet narration and
             # thought voices remain clearly audible.
+            # Warm the voice and reduce breathy/airy high frequencies. Avoid
+            # per-clip loudnorm because it can exaggerate breaths and thin consonants.
             parts.extend([
-                'highpass=f=70',
-                'lowpass=f=14500',
-                'loudnorm=I=-16:TP=-2:LRA=7',
-                'acompressor=threshold=-21dB:ratio=2.2:attack=12:release=180:makeup=2',
-                f'afade=t=in:st=0:d={min(VOICE_FADE_IN_SECONDS, max(0.025, rendered_seconds * 0.18)):.3f}',
-                f'afade=t=out:st={max(0.02, rendered_seconds-min(VOICE_FADE_OUT_SECONDS, max(0.04, rendered_seconds * 0.22))):.3f}:d={min(VOICE_FADE_OUT_SECONDS, max(0.04, rendered_seconds * 0.22)):.3f}',
+                'highpass=f=55',
+                'lowpass=f=11000',
+                'equalizer=f=170:t=q:w=1.0:g=2.2',
+                'equalizer=f=320:t=q:w=1.1:g=1.2',
+                'equalizer=f=4200:t=q:w=1.2:g=-1.8',
+                'equalizer=f=7600:t=q:w=1.0:g=-2.6',
+                'acompressor=threshold=-18dB:ratio=1.65:attack=18:release=240:makeup=1.2:knee=3',
+                f'afade=t=in:st=0:d={min(VOICE_FADE_IN_SECONDS, max(0.018, rendered_seconds * 0.12)):.3f}',
+                f'afade=t=out:st={max(0.02, rendered_seconds-min(VOICE_FADE_OUT_SECONDS, max(0.03, rendered_seconds * 0.15))):.3f}:d={min(VOICE_FADE_OUT_SECONDS, max(0.03, rendered_seconds * 0.15)):.3f}',
                 f'adelay={start_ms}|{start_ms}[{label}]',
             ])
             filters.append(','.join(parts).replace('],', ']'))
@@ -1219,8 +1225,8 @@ def create_mp3(srt_text, progress_callback=None):
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'alimiter=limit=0.92:attack=8:release=120,'
-              'loudnorm=I=-14:TP=-1.5:LRA=8,'
+              'alimiter=limit=0.94:attack=10:release=180,'
+              'loudnorm=I=-15:TP=-1.2:LRA=9,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
