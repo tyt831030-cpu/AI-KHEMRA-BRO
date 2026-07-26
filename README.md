@@ -1,29 +1,53 @@
-# AI KHEMRA BRO v5.0 Production Stable
+# AI KHEMRA BRO — Version 2.0
 
-## Fixed in this build
-- Navigation no longer returns to the first/home function on every Streamlit rerun.
-- Saved customer login and encrypted Gemini API keys remain attached to the Access Code.
-- Access Codes are not locked to one phone or browser.
-- Removed the database-wide session reset that previously ran on every page refresh.
-- The full interface stays visible when no Gemini API key is saved.
-- Added persistent `DATA_DIR` support for Railway/Render volumes.
-- Whisper defaults to the `small` model and uses tighter VAD settings to retain short Chinese speech.
-- Existing SRT timestamps are kept as the source of truth for translation and dubbing.
+This package upgrades the existing application without redesigning its UI.
 
-## Required deployment settings
-Set these secrets/environment variables:
+## Version 2.0 improvements
 
-- `COOKIE_SECRET`: long random secret
-- `API_ENCRYPTION_KEY`: long random secret
-- `LICENSE_PEPPER`: long random secret
-- `ADMIN_PASSWORD`: owner password
-- `DATA_DIR=/data` when a persistent volume is mounted at `/data`
+- Smarter Gemini translation with recent-dialogue continuity between batches.
+- More consistent character gender, age, narrator, and inner-thought tags.
+- Automatic retry for temporary Gemini 429/503/network failures.
+- Repair pass now catches missing Chinese and clearly overlong dubbing lines.
+- Existing mobile UI, upload, SRT editor, MP3 generation, downloads, owner panel, and customer licensing are preserved.
+- Customer access codes remain reusable across phones and browsers while active and unexpired; no permanent device lock is applied.
+- Each Streamlit browser session keeps a separate temporary project workspace.
 
-Optional performance settings:
+## Deploy
 
-- `WHISPER_MODEL=small`
-- `WHISPER_COMPUTE_TYPE=int8`
-- `WHISPER_CPU_THREADS=4`
+Upload these four files to the root of the existing GitHub repository, replacing the old files:
 
-## Important production note
-This package is stable for one persistent server instance. Supporting 1,000 simultaneous video-processing jobs requires external PostgreSQL/Supabase, object storage, a job queue, and multiple workers. A phone only controls the app; Whisper, translation, FFmpeg, and TTS run on the server.
+- `app.py`
+- `requirements.txt`
+- `packages.txt`
+- `README.md`
+
+Keep API keys and passwords only in Streamlit Secrets. Do not commit them to GitHub.
+
+## Required Streamlit Secrets
+
+Keep the same secrets already used by your deployment. At minimum, configure the Gemini/API and owner/security values expected by `app.py`.
+
+
+## Version 3.0 audio changes
+- Locks every generated voice to the original SRT start timestamp.
+- Prevents generated speakers from overlapping each other.
+- Fits long lines into the available subtitle slot with controlled speed.
+- Reduces breathy/airy high frequencies.
+- Uses gentler per-clip processing and one final loudness master.
+
+
+## Version 3.1 — Private subscription expiry
+- Owner can create 7-day, 1-month, 3-month, 6-month, and 1-year access codes.
+- Each customer sees only their own package and expiry date inside the ☰ settings panel.
+- Expiry is checked from the server-side license database on login and every Streamlit rerun.
+- Expired or disabled licenses are automatically blocked from using the app.
+- Renewal continues from the current expiry date when still active, or from the current date when already expired.
+
+
+## Version 3.2 — Locked API key and live private countdown
+- A live subscription countdown is shown only inside the signed-in customer's ☰ settings.
+- Countdown displays months, weeks, days, hours, minutes, and seconds.
+- Customer API-key deletion button was removed.
+- Only the Owner can delete a customer's saved API key from Admin.
+- The entire customer workspace is blocked until at least one Gemini API key is saved.
+- Saved API keys remain encrypted in the account database.
