@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -469,6 +470,38 @@ def clear_private_user_session():
             del st.session_state[state_key]
 
 
+def _new_project_workspace():
+    """Create a private workspace for this Streamlit browser session only."""
+    session_id = uuid.uuid4().hex
+    workspace = Path(tempfile.gettempdir()) / "ai_khemra_bro_sessions" / session_id
+    workspace.mkdir(parents=True, exist_ok=True)
+    return session_id, workspace
+
+
+def _ensure_project_workspace():
+    session_id = st.session_state.get("project_session_id")
+    workspace_value = st.session_state.get("project_workspace")
+    if not session_id or not workspace_value:
+        session_id, workspace = _new_project_workspace()
+        st.session_state.project_session_id = session_id
+        st.session_state.project_workspace = str(workspace)
+        return workspace
+    workspace = Path(workspace_value)
+    workspace.mkdir(parents=True, exist_ok=True)
+    return workspace
+
+
+def _reset_project_workspace():
+    """Delete and recreate only the current user's workspace."""
+    old_value = st.session_state.get("project_workspace")
+    if old_value:
+        shutil.rmtree(old_value, ignore_errors=True)
+    session_id, workspace = _new_project_workspace()
+    st.session_state.project_session_id = session_id
+    st.session_state.project_workspace = str(workspace)
+    return workspace
+
+
 @st.cache_resource(show_spinner=False)
 def load_whisper_model():
     # Base + int8 is selected so it can run on Streamlit Community Cloud CPU.
@@ -483,9 +516,14 @@ for key,value in {
     'mp3_download_name':'khmer_story_dubbed',
     'video_uploader_version':0,
     'project_temp_files':[],
+    'project_session_id':'',
+    'project_workspace':'',
+    'mp3_filename_widget':'khmer_story_dubbed',
 }.items():
     if key not in st.session_state:
         st.session_state[key]=value
+
+_ensure_project_workspace()
 
 def clean_srt(text):
     text=re.sub(r'^```(?:srt)?\s*','',text.strip(),flags=re.I)
@@ -499,13 +537,15 @@ def safe_download_stem(value, fallback='khmer_story_dubbed'):
     return (name or fallback)[:100]
 
 def save_upload(uploaded_file):
-    """Save the received MP4 without making another full in-memory copy."""
-    suffix = Path(uploaded_file.name).suffix or '.mp4'
+    """Save this upload inside the current user's private session folder."""
+    suffix = Path(uploaded_file.name).suffix.lower() or ".mp4"
+    workspace = _ensure_project_workspace()
+    destination = workspace / f"upload_{uuid.uuid4().hex}{suffix}"
     uploaded_file.seek(0)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+    with destination.open("wb") as temp:
         shutil.copyfileobj(uploaded_file, temp, length=1024 * 1024)
         temp.flush()
-        return Path(temp.name)
+    return destination
 
 def seconds_to_srt(value):
     total_ms = max(0, int(round(float(value) * 1000)))
@@ -1723,7 +1763,7 @@ for state_key, default_value in {
 with st.container(key="api_menu_container"):
     with st.popover("☰", help="API Key និងការកំណត់កម្មវិធី"):
         st.markdown("### 🔑 API Key និងការកំណត់")
-        st.caption("ទូរសព្ទ/Browser នីមួយៗមាន API Key និងឯកសារផ្ទាល់ខ្លួន។")
+        st.caption("ទូរសព្ទ/Browser នីមួយៗមាន Session, API Key, Upload, SRT និង MP3 ដាច់ដោយឡែកពីគ្នា។")
 
         st.text_area(
             "Gemini API Key",
@@ -1809,7 +1849,9 @@ with tab_video:
         source_stem = safe_download_stem(Path(uploaded_video.name).stem, 'khmer_story')
         st.session_state.source_video_stem = source_stem
         if not st.session_state.get('mp3_download_name') or st.session_state.get('mp3_download_name') == 'khmer_story_dubbed':
-            st.session_state.mp3_download_name = f"{source_stem}_khmer"
+            suggested_name = f"{source_stem}_khmer"
+            st.session_state.mp3_download_name = suggested_name
+            st.session_state.mp3_filename_widget = suggested_name
 
         # Keep the uploaded filename and file size private on-screen.
         # The file is still available internally for validation and processing.
@@ -2005,15 +2047,20 @@ with tab_video:
                     progress_text.empty()
                     st.error(f"❌ បង្កើត MP3 មិនបាន៖ {exc}")
     else:
+        if not st.session_state.get("mp3_filename_widget"):
+            st.session_state.mp3_filename_widget = st.session_state.get(
+                "mp3_download_name", "khmer_story_dubbed"
+            )
         st.text_input(
             "✏️ ឈ្មោះឯកសារ MP3",
-            key="mp3_download_name",
+            key="mp3_filename_widget",
             placeholder="ឧទាហរណ៍៖ រឿងភាគទី១_សំឡេងខ្មែរ",
             help="អ្នកអាចកែឈ្មោះឯកសារមុនចុច Download។",
         )
+        st.session_state.mp3_download_name = st.session_state.mp3_filename_widget
         st.audio(st.session_state.audio_bytes, format="audio/mp3")
         download_stem = safe_download_stem(
-            st.session_state.get("mp3_download_name"),
+            st.session_state.get("mp3_filename_widget"),
             fallback="khmer_story_dubbed",
         )
         st.download_button(
@@ -2024,17 +2071,8 @@ with tab_video:
             use_container_width=True,
         )
 
-    st.markdown('<div class="clear-wrap">', unsafe_allow_html=True)
-    if st.button("🗑️ សម្អាត (Clear Video Project)", key="clear_project"):
-        # Delete only this user's temporary files. API keys/cookies are kept.
-        for temp_name in st.session_state.get("project_temp_files", []):
-            try:
-                temp_path = Path(temp_name)
-                if temp_path.exists() and temp_path.is_file():
-                    temp_path.unlink()
-            except OSError:
-                pass
-
+    def _clear_current_project():
+        _reset_project_workspace()
         st.session_state.project_temp_files = []
         st.session_state.srt_text = ""
         st.session_state.pending_srt = ""
@@ -2043,13 +2081,17 @@ with tab_video:
         st.session_state.pending_editor_update = ""
         st.session_state.source_video_stem = "khmer_story"
         st.session_state.mp3_download_name = "khmer_story_dubbed"
+        st.session_state.mp3_filename_widget = "khmer_story_dubbed"
+        st.session_state.main_srt_editor = ""
+        st.session_state.video_uploader_version = int(st.session_state.get("video_uploader_version", 0)) + 1
 
-        # Give file_uploader a brand-new widget key so the selected video
-        # disappears immediately on iPhone, Android and desktop browsers.
-        st.session_state.video_uploader_version = (
-            int(st.session_state.get("video_uploader_version", 0)) + 1
-        )
-        st.rerun()
+    st.markdown('<div class="clear-wrap">', unsafe_allow_html=True)
+    st.button(
+        "🗑️ សម្អាត (Clear Video Project)",
+        key="clear_project",
+        on_click=_clear_current_project,
+        use_container_width=True,
+    )
     st.markdown("</div>", unsafe_allow_html=True)
 
 with tab_translate:
