@@ -3,7 +3,6 @@ import base64
 import datetime
 import hashlib
 import hmac
-import json
 import os
 import re
 import secrets
@@ -23,7 +22,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "4.4"
+APP_VERSION = "5.0"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -178,14 +177,6 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
   overflow-x:hidden!important;
   width:100%!important;
   max-width:100vw!important;
-  min-height:100%!important;
-  background:#080d15!important;
-}
-html,body{overscroll-behavior-y:none!important;}
-[data-testid="stAppViewContainer"]{min-height:100dvh!important;}
-@supports (-webkit-touch-callout:none){
-  body{min-height:-webkit-fill-available!important;}
-  .stApp{min-height:-webkit-fill-available!important;}
 }
 .block-container{
   width:100%!important;
@@ -736,8 +727,22 @@ def _reset_project_workspace():
 
 @st.cache_resource(show_spinner=False)
 def load_whisper_model():
-    # Base + int8 is selected so it can run on Streamlit Community Cloud CPU.
-    return WhisperModel("base", device="cpu", compute_type="int8")
+    """Load one shared ASR model per server process.
+
+    WHISPER_MODEL may be set to base/small/medium.  "small" is the production
+    default because it captures short Chinese words more reliably than base
+    while remaining practical on a CPU server.
+    """
+    model_name = os.getenv("WHISPER_MODEL", "small").strip() or "small"
+    compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8").strip() or "int8"
+    cpu_threads = max(1, int(os.getenv("WHISPER_CPU_THREADS", "4")))
+    return WhisperModel(
+        model_name,
+        device="cpu",
+        compute_type=compute_type,
+        cpu_threads=cpu_threads,
+        num_workers=1,
+    )
 
 for key,value in {
     'srt_text':'',
@@ -901,13 +906,13 @@ def transcribe_with_whisper(wav_path):
         best_of=5,
         vad_filter=True,
         vad_parameters={
-            "min_silence_duration_ms": 220,
-            "min_speech_duration_ms": 45,
-            "speech_pad_ms": 380,
+            "min_silence_duration_ms": 160,
+            "min_speech_duration_ms": 25,
+            "speech_pad_ms": 420,
         },
         condition_on_previous_text=True,
         word_timestamps=True,
-        no_speech_threshold=0.65,
+        no_speech_threshold=0.72,
         log_prob_threshold=-1.5,
         compression_ratio_threshold=2.6,
     )
@@ -1580,12 +1585,23 @@ def create_mp3(srt_text, progress_callback=None):
 # PRIVATE CUSTOMER LOGIN + HIDDEN OWNER LICENSE MANAGEMENT
 # This module adds security only. The original app UI/workflow below is unchanged.
 # ─────────────────────────────────────────────────────────────────────────────
-# Persistent data directory. On Railway/Render, set DATA_DIR to a mounted volume.
-# On Streamlit Community Cloud, local files can still be reset after redeploy, so
-# a managed database is recommended for true production persistence.
-_DATA_DIR = Path(os.getenv("DATA_DIR", str(Path(__file__).parent))).expanduser().resolve()
-_DATA_DIR.mkdir(parents=True, exist_ok=True)
-LICENSE_DB_PATH = _DATA_DIR / "licenses.db"
+def _resolve_data_dir():
+    configured = os.getenv("DATA_DIR", "").strip()
+    candidates = [Path(configured)] if configured else []
+    candidates.extend([Path("/data"), Path(__file__).resolve().parent / "data"])
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            probe = candidate / ".write_test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return candidate
+        except Exception:
+            continue
+    return Path(__file__).resolve().parent
+
+DATA_DIR = _resolve_data_dir()
+LICENSE_DB_PATH = DATA_DIR / "licenses.db"
 SESSION_COOKIE_NAME = "ai_khemra_bro_customer_session"
 LOGIN_COOKIE_NAME = "ai_khemra_bro_saved_login"
 SESSION_IDLE_MINUTES = 30
@@ -1627,13 +1643,9 @@ def get_admin_password():
 
 
 def license_connection():
-    connection = sqlite3.connect(
-        str(LICENSE_DB_PATH), timeout=30, check_same_thread=False
-    )
+    connection = sqlite3.connect(str(LICENSE_DB_PATH), timeout=30)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("PRAGMA synchronous=NORMAL")
-    connection.execute("PRAGMA temp_store=MEMORY")
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute("PRAGMA busy_timeout=30000")
     return connection
@@ -2382,17 +2394,11 @@ def admin_dashboard():
 
 try:
     initialize_license_database()
-except Exception as startup_error:
-    st.error("កម្មវិធីមិនអាចបើក Database បាន។ សូមពិនិត្យ DATA_DIR ឬថាសផ្ទុកទិន្នន័យ។")
-    st.code(str(startup_error), language=None)
+except Exception as database_error:
+    st.error(f"Database មិនអាចបើកបាន៖ {database_error}")
+    st.info("កំណត់ DATA_DIR ទៅ Persistent Volume ដែលអាចសរសេរបាន រួច Restart App។")
     st.stop()
-
-# Do not clear customer sessions on every rerun. Older versions did this and could
-# cause login loops or blank screens on Safari. Multi-device access is already
-# supported by validate_customer_login(), so no device lock cleanup is needed.
 hidden_owner_trigger()
-# Safari-safe render marker: prevents an apparently empty page while components initialize.
-st.markdown('<div id="khbr-app-ready" style="height:1px;overflow:hidden;color:transparent">ready</div>', unsafe_allow_html=True)
 if st.session_state.get("admin_gate_visible", False) or st.session_state.get("admin_authenticated", False):
     admin_dashboard()
     st.stop()
@@ -2455,6 +2461,7 @@ for state_key, default_value in {
     "translation_style": "🔴 Chinese Drama Pro",
     "model_selector": "gemini-2.5-flash",
     "lite_mode": True,
+    "active_page": "🎬 Video → SRT",
     "api_saved_notice": False,
 }.items():
     if state_key not in st.session_state:
@@ -2539,22 +2546,33 @@ lite_mode = st.session_state.lite_mode
 max_mb = 60 if lite_mode else 150
 
 if not valid_api_keys:
-    st.error(
-        "🔐 កម្មវិធីមិនអាចដំណើរការបានទេ ព្រោះមិនទាន់មាន Gemini API Key។ "
-        "សូមចុចប៊ូតុង ☰ បញ្ចូល API Key ហើយចុច «រក្សាទុក API Key»។"
+    st.warning(
+        "🔐 មិនទាន់មាន Gemini API Key។ UI នៅតែអាចប្រើបាន ប៉ុន្តែប៊ូតុង AI "
+        "នឹងស្នើឱ្យដាក់ API Key មុនដំណើរការ។ ចុច ☰ ដើម្បីរក្សាទុកសោ។"
     )
-    st.stop()
 
 st.markdown(
     '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
     unsafe_allow_html=True,
 )
 
-tab_video, tab_translate, tab_srt_speech, tab_text_speech = st.tabs(
-    ["🎬 Video → SRT", "📝 AI Subtitle Translator", "📜 SRT → Speech", "🎙️ Text → Speech"]
+PAGE_OPTIONS = [
+    "🎬 Video → SRT",
+    "📝 AI Subtitle Translator",
+    "📜 SRT → Speech",
+    "🎙️ Text → Speech",
+]
+if "active_page" not in st.session_state or st.session_state.active_page not in PAGE_OPTIONS:
+    st.session_state.active_page = PAGE_OPTIONS[0]
+active_page = st.radio(
+    "មុខងារ",
+    PAGE_OPTIONS,
+    horizontal=True,
+    key="active_page",
+    label_visibility="collapsed",
 )
 
-with tab_video:
+if active_page == PAGE_OPTIONS[0]:
     st.markdown('<div class="section-title">1️⃣ Generate Subtitles (Khmer ខ្មែរ)</div>', unsafe_allow_html=True)
 
     uploaded_video = st.file_uploader(
@@ -2813,7 +2831,7 @@ with tab_video:
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-with tab_translate:
+if active_page == PAGE_OPTIONS[1]:
     st.header("AI Subtitle Translator")
     st.info("បិទភ្ជាប់ Chinese SRT ហើយបកប្រែទៅ Khmer SRT ជាភាសាខ្មែរធម្មជាតិ ស្អាតសម្រាប់ទស្សនិកជនទូទៅ និងរក្សា timestamp ដើម។")
     source_srt = st.text_area("Chinese SRT", height=300, key="translator_source")
@@ -2858,7 +2876,7 @@ with tab_translate:
             except Exception as exc:
                 st.error(f"❌ {exc}")
 
-with tab_srt_speech:
+if active_page == PAGE_OPTIONS[2]:
     st.header("SRT → Speech")
     speech_srt = st.text_area(
         "Khmer SRT with [BOY] [GIRL] [M_YOUNG] [F_YOUNG] [M_ADULT] [F_ADULT] [M_OLD] [F_OLD] [M_THINK] [F_THINK] [NARRATOR_M] [NARRATOR_F]",
@@ -2876,7 +2894,7 @@ with tab_srt_speech:
             except Exception as exc:
                 st.error(f"❌ {exc}")
 
-with tab_text_speech:
+if active_page == PAGE_OPTIONS[3]:
     st.header("Text → Speech")
     plain_text = st.text_area("Khmer Text", height=260, key="plain_text_input")
     voice_choice = st.selectbox(
