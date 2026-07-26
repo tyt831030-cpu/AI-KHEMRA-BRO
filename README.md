@@ -34,3 +34,11 @@ Keep the same secrets already used by your deployment. At minimum, configure the
 - Fits long lines into the available subtitle slot with controlled speed.
 - Reduces breathy/airy high frequencies.
 - Uses gentler per-clip processing and one final loudness master.
+
+
+## Version 3.1 — Private subscription expiry
+- Owner can create 7-day, 1-month, 3-month, 6-month, and 1-year access codes.
+- Each customer sees only their own package and expiry date inside the ☰ settings panel.
+- Expiry is checked from the server-side license database on login and every Streamlit rerun.
+- Expired or disabled licenses are automatically blocked from using the app.
+- Renewal continues from the current expiry date when still active, or from the current date when already expired.
