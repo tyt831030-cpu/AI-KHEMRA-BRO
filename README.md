@@ -35,3 +35,11 @@ Upload Video → Translate → Edit SRT → Generate Khmer MP3 → Download
 - Removes device and single-session locking.
 - A valid access code can be reused after logout, browser close, phone restart, and on different phones.
 - Customer name is optional at login; the valid access code is the credential.
+
+
+## Session isolation update
+- Separate private workspace per browser session.
+- Upload/SRT/MP3/Clear Project do not affect other users.
+- Access codes remain reusable on all phones and browsers.
+- Fixed MP3 filename StreamlitAPIException.
+- SQLite WAL enabled for safer concurrent access.
