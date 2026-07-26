@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "3.2"
+APP_VERSION = "4.0"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -2409,17 +2409,8 @@ if not login_ok:
     st.rerun()
 
 st.session_state.customer_session_token = current_token
-customer_bar_left, customer_bar_right = st.columns([4, 1])
-with customer_bar_left:
-    st.caption(f"👤 {login_row['customer_name']}")
-with customer_bar_right:
-    if st.button("ចាកចេញ", key="customer_logout", use_container_width=True):
-        release_customer_session(st.session_state.get("customer_code", ""), current_token)
-        _session_cookie_delete()
-        clear_private_user_session()
-        for key in ("customer_authenticated", "customer_name", "customer_code", "customer_session_token"):
-            st.session_state.pop(key, None)
-        st.rerun()
+# Keep the main workspace clean: show only the signed-in customer name here.
+st.caption(f"👤 {login_row['customer_name']}")
 
 # Read this browser's saved key once per Streamlit session.
 if "api_keys_manager" not in st.session_state:
@@ -2506,6 +2497,16 @@ with st.container(key="api_menu_container"):
         )
         st.toggle("📶 4G Lite Mode", key="lite_mode")
 
+        st.divider()
+        # Small logout control lives only inside Settings.
+        if st.button("🚪 ចាកចេញ", key="customer_logout_settings", use_container_width=True):
+            release_customer_session(st.session_state.get("customer_code", ""), current_token)
+            _session_cookie_delete()
+            clear_private_user_session()
+            for key in ("customer_authenticated", "customer_name", "customer_code", "customer_session_token"):
+                st.session_state.pop(key, None)
+            st.rerun()
+
 api_keys_text = st.session_state.get("api_keys_manager", "")
 valid_api_keys = [line.strip() for line in api_keys_text.splitlines() if line.strip()]
 api_key = valid_api_keys[0] if valid_api_keys else ""
@@ -2515,11 +2516,10 @@ lite_mode = st.session_state.lite_mode
 max_mb = 60 if lite_mode else 150
 
 if not valid_api_keys:
-    st.error(
-        "🔐 កម្មវិធីមិនអាចដំណើរការបានទេ ព្រោះមិនទាន់មាន Gemini API Key។ "
-        "សូមចុចប៊ូតុង ☰ បញ្ចូល API Key ហើយចុច «រក្សាទុក API Key»។"
+    st.warning(
+        "🔐 មិនទាន់មាន Gemini API Key ទេ។ UI និងមុខងារទាំងអស់នៅតែបង្ហាញជានិច្ច; "
+        "សូមចុច ☰ ដាក់ API Key មុនប្រើមុខងារ AI បកប្រែ។"
     )
-    st.stop()
 
 st.markdown(
     '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
