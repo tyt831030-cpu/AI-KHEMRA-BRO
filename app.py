@@ -3,6 +3,7 @@ import base64
 import datetime
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -27,7 +28,7 @@ try:
 except Exception:
     imageio_ffmpeg = None
 
-APP_VERSION = "7.4"
+APP_VERSION = "7.4.1"
 
 
 
