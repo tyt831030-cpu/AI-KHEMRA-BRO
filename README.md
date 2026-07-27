@@ -1,6 +1,6 @@
-# AI KHEMRA BRO v7.2 — Streamlit Build & Clear Audio Fix
+# AI KHEMRA BRO v7.3 — Khmer-Only + Faster Processing
 
-Use exactly these four files in the root of the GitHub repository:
+Use exactly four files in the GitHub repository root:
 
 - app.py
 - requirements.txt
@@ -9,24 +9,18 @@ Use exactly these four files in the root of the GitHub repository:
 
 ## Fixed
 
-1. Fixed:
-   `run_ffmpeg() got an unexpected keyword argument 'capture_output'`
+- Rejects Thai subtitles completely.
+- Rejects Chinese, Vietnamese, English, and Latin-letter dialogue.
+- Requires real Cambodian Khmer Unicode before SRT can be generated.
+- Automatically retries only the incorrect subtitle lines.
+- Prevents wrong-language text from being placed in the final SRT.
+- Reduces Whisper CPU processing time by using beam_size=5 and best_of=3.
+- Keeps FFmpeg and clear-audio fixes from v7.2.
 
-2. The video flow can now continue:
-   Upload → FFmpeg audio extraction → Whisper → Khmer SRT → MP3.
+## Install
 
-3. Improved Khmer voice clarity:
-   - less low-frequency heaviness
-   - clearer consonants
-   - preserved high-frequency detail
-   - gentler compression
-   - 48 kHz stereo, 192 kbps MP3
-   - final loudness target: -16 LUFS, true peak -1.5 dB
+Replace the old four files in GitHub, then:
 
-## Deploy
+Streamlit → Manage app → Reboot app
 
-Replace the four old files in GitHub, then open Streamlit:
-
-Manage app → Reboot app
-
-Do not upload Dockerfile to Streamlit Community Cloud.
+After reboot, upload the video again and press Generate Khmer SRT.
