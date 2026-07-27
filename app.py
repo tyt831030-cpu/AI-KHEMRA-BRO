@@ -27,7 +27,7 @@ try:
 except Exception:
     imageio_ffmpeg = None
 
-APP_VERSION = "7.2"
+APP_VERSION = "7.3"
 
 
 
@@ -970,8 +970,8 @@ def transcribe_with_whisper(wav_path):
     segments, _ = model.transcribe(
         str(wav_path),
         language="zh",
-        beam_size=10,
-        best_of=5,
+        beam_size=5,
+        best_of=3,
         vad_filter=True,
         vad_parameters={
             "min_silence_duration_ms": 220,
@@ -1033,6 +1033,30 @@ def contains_cjk(text):
     return bool(re.search(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]", text or ""))
 
 
+def contains_thai(text):
+    return bool(re.search(r"[\u0E00-\u0E7F]", text or ""))
+
+
+def contains_vietnamese_or_latin_words(text):
+    """Reject non-Khmer dialogue while still allowing numbers and punctuation."""
+    cleaned = re.sub(r"https?://\S+|www\.\S+", "", text or "", flags=re.I)
+    return bool(re.search(r"[A-Za-zÀ-ỹ]", cleaned))
+
+
+def is_valid_khmer_dialogue(text):
+    """Require real Khmer script and reject Thai/Chinese/Latin dialogue."""
+    value = normalize_dialogue(text)
+    if not value:
+        return False
+    if contains_cjk(value) or contains_thai(value) or contains_vietnamese_or_latin_words(value):
+        return False
+
+    khmer_chars = len(re.findall(r"[\u1780-\u17FF]", value))
+    letterlike = len(re.findall(r"[\u1780-\u17FFA-Za-zÀ-ỹ\u0E00-\u0E7F\u3400-\u9FFF]", value))
+    # At least one Khmer character and overwhelmingly Khmer when letters exist.
+    return khmer_chars >= 1 and (letterlike == 0 or khmer_chars / letterlike >= 0.85)
+
+
 def normalize_dialogue(text):
     text = re.sub(r"```|<[^>]+>", "", str(text or ""))
     text = re.sub(r"\s+", " ", text).strip()
@@ -1063,7 +1087,7 @@ def translation_needs_repair(cue, item):
     if not item:
         return True
     dialogue = normalize_dialogue(item.get("text"))
-    if not dialogue or contains_cjk(dialogue):
+    if not is_valid_khmer_dialogue(dialogue):
         return True
     # A tiny tolerance avoids needless API calls for Khmer tokenization quirks.
     return khmer_word_count(dialogue) > cue_word_limit(cue["start"], cue["end"]) + 2
@@ -1099,7 +1123,7 @@ def repair_translation_items(client, model_name, uploaded_video, cues, items):
                 if tag not in VOICE_PROFILES:
                     tag = items.get(cue_id, {}).get("tag", "M")
                 dialogue = normalize_dialogue(row.get("text"))
-                if dialogue and not contains_cjk(dialogue):
+                if is_valid_khmer_dialogue(dialogue):
                     items[cue_id] = {"tag": tag, "text": dialogue}
     bad_ids = [
         cue["id"] for cue in cues
@@ -1210,6 +1234,10 @@ def build_srt(cues, translated):
     blocks = []
     for cue in cues:
         item = translated[cue["id"]]
+        if not is_valid_khmer_dialogue(item.get("text", "")):
+            raise RuntimeError(
+                f"បន្ទាត់ {cue['id']} មិនមែនជាភាសាខ្មែរត្រឹមត្រូវទេ។ សូមបកប្រែម្តងទៀត។"
+            )
         blocks.append(
             f'{cue["id"]}\n'
             f'{seconds_to_srt(cue["start"])} --> {seconds_to_srt(cue["end"])}\n'
@@ -1395,7 +1423,9 @@ STRICT RULES:
 2. Return every input ID exactly once and in the same order.
 3. Never change, merge, split, or invent IDs.
 4. Do not omit short replies, names, numbers, negations, fillers, cries, or reactions.
-5. Output Khmer only in text. Do not leave Chinese, Thai, Vietnamese, or English dialogue.
+5. Output ONLY Cambodian Khmer Unicode (characters in the Khmer block U+1780–U+17FF).
+   Thai script is strictly forbidden. Chinese, Vietnamese, English, pinyin, and Latin-letter dialogue are forbidden.
+   Before returning JSON, inspect every text value and rewrite it if it contains any non-Khmer language.
 6. Keep each line concise enough for its timestamp, but preserve the full meaning.
 7. Select one tag: M_ADULT, F_ADULT, M_OLD, F_OLD, BOY, GIRL,
    M_THINK, F_THINK, NARRATOR_M, NARRATOR_F.
@@ -1422,7 +1452,7 @@ CUES:
         if tag not in VOICE_PROFILES:
             tag = "M_ADULT"
         dialogue = normalize_dialogue(row.get("text", ""))
-        if dialogue and not contains_cjk(dialogue):
+        if is_valid_khmer_dialogue(dialogue):
             parsed[cue_id] = {"tag": tag, "text": dialogue}
     return parsed
 
@@ -1448,9 +1478,26 @@ def translate_cues_text_only(client, model_name, cues):
 
         missing = [cue for cue in batch if cue["id"] not in translated]
         if missing:
-            # One compact repair request, only for missing lines.
+            # One compact repair request, only for invalid/missing lines.
             repaired = _translate_batch_text_only(client, model_name, missing)
             translated.update(repaired)
+
+        # Strict final language guard: Thai or any non-Khmer output is removed
+        # and retried once in a smaller group for better compliance.
+        invalid = [
+            cue for cue in batch
+            if cue["id"] not in translated
+            or not is_valid_khmer_dialogue(translated[cue["id"]].get("text", ""))
+        ]
+        if invalid:
+            for cue in invalid:
+                translated.pop(cue["id"], None)
+            for repair_offset in range(0, len(invalid), 10):
+                repaired = _translate_batch_text_only(
+                    client, model_name, invalid[repair_offset:repair_offset + 10],
+                    "IMPORTANT: Previous output used the wrong language. Return Cambodian Khmer script only."
+                )
+                translated.update(repaired)
 
         still_missing = [cue["id"] for cue in batch if cue["id"] not in translated]
         if still_missing:
