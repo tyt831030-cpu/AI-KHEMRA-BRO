@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "5.3"
+APP_VERSION = "6.0"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -741,6 +741,9 @@ for key,value in {
     'project_session_id':'',
     'project_workspace':'',
     'mp3_filename_widget':'khmer_story_dubbed',
+    'source_srt_text':'',
+    'speech_tab_audio_bytes':None,
+    'text_tab_audio_bytes':None,
 }.items():
     if key not in st.session_state:
         st.session_state[key]=value
@@ -1239,6 +1242,37 @@ def video_to_srt(video_path, api_keys, model):
 
 
 # ---------------------------------------------------------------------------
+# v5.5 resilient SRT workflow
+# ---------------------------------------------------------------------------
+def build_source_srt(cues):
+    """Build a standards-compliant source-language SRT from Whisper cues.
+
+    This is always available even when Gemini has no quota, so the user never
+    loses the transcription work and can still download or translate it later.
+    """
+    blocks = []
+    for index, cue in enumerate(cues, start=1):
+        text = normalize_dialogue(cue.get("source", ""))
+        if not text:
+            continue
+        blocks.append(
+            f"{index}\n{seconds_to_srt(cue['start'])} --> {seconds_to_srt(cue['end'])}\n{text}"
+        )
+    return "\n\n".join(blocks).strip()
+
+
+def transcribe_video_to_source_srt(video_path):
+    """FFmpeg + Whisper only. No Gemini key is required."""
+    with tempfile.TemporaryDirectory() as folder:
+        audio_path = Path(folder) / "audio_16k.flac"
+        extract_audio(Path(video_path), audio_path)
+        cues = transcribe_with_whisper(audio_path)
+        source_srt = build_source_srt(cues)
+        if not source_srt or "-->" not in source_srt:
+            raise RuntimeError("មិនអាចបង្កើត Source SRT ពីវីដេអូបានទេ។")
+        return cues, source_srt
+
+# ---------------------------------------------------------------------------
 # v5.4 reliable Khmer SRT pipeline
 # ---------------------------------------------------------------------------
 def _candidate_gemini_models(selected_model):
@@ -1337,11 +1371,11 @@ def translate_cues_text_only(client, model_name, cues):
     return translated
 
 
-def video_to_srt(video_path, api_keys, model):
+def video_to_srt(video_path, api_keys, model, prepared_cues=None):
     """
-    Reliable v5.4 path:
+    Reliable v5.5 path:
     FFmpeg -> Whisper timestamps -> text-only Gemini translation -> Khmer SRT.
-    It does not upload the video to Gemini, so it uses far fewer tokens and requests.
+    When prepared_cues are supplied, Whisper is not run a second time.
     """
     if isinstance(api_keys, str):
         api_keys = [api_keys]
@@ -1349,41 +1383,42 @@ def video_to_srt(video_path, api_keys, model):
     if not api_keys:
         raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
 
-    with tempfile.TemporaryDirectory() as folder:
-        folder_path = Path(folder)
-        audio_path = folder_path / "audio_16k.flac"
-        extract_audio(Path(video_path), audio_path)
-        cues = transcribe_with_whisper(audio_path)
-        if not cues:
-            raise RuntimeError("Whisper មិនរកឃើញសំឡេងនិយាយក្នុងវីដេអូនេះទេ។")
+    if prepared_cues is None:
+        with tempfile.TemporaryDirectory() as folder:
+            audio_path = Path(folder) / "audio_16k.flac"
+            extract_audio(Path(video_path), audio_path)
+            cues = transcribe_with_whisper(audio_path)
+    else:
+        cues = prepared_cues
+    if not cues:
+        raise RuntimeError("Whisper មិនរកឃើញសំឡេងនិយាយក្នុងវីដេអូនេះទេ។")
 
-        last_error = None
-        for api_key_value in api_keys:
-            client = genai.Client(api_key=api_key_value)
-            for model_name in _candidate_gemini_models(model):
-                try:
-                    translated = translate_cues_text_only(client, model_name, cues)
-                    result = build_srt(cues, translated)
-                    if not result.strip() or "-->" not in result:
-                        raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
-                    return result
-                except Exception as exc:
-                    last_error = exc
-                    message = str(exc).upper()
-                    # Try the next model for quota/model availability problems.
-                    if (
-                        is_quota_error(exc)
-                        or is_invalid_key_error(exc)
-                        or "NOT_FOUND" in message
-                        or "MODEL" in message and "NOT" in message
-                        or "UNAVAILABLE" in message
-                        or "503" in message
-                    ):
-                        continue
-                    raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
+    last_error = None
+    for api_key_value in api_keys:
+        client = genai.Client(api_key=api_key_value)
+        for model_name in _candidate_gemini_models(model):
+            try:
+                translated = translate_cues_text_only(client, model_name, cues)
+                result = build_srt(cues, translated)
+                if not result.strip() or "-->" not in result:
+                    raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
+                return result
+            except Exception as exc:
+                last_error = exc
+                message = str(exc).upper()
+                # Try the next model for quota/model availability problems.
+                if (
+                    is_quota_error(exc)
+                    or is_invalid_key_error(exc)
+                    or "NOT_FOUND" in message
+                    or "MODEL" in message and "NOT" in message
+                    or "UNAVAILABLE" in message
+                    or "503" in message
+                ):
+                    continue
+                raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
 
-        raise RuntimeError(friendly_ai_error(last_error, len(api_keys)))
-
+    raise RuntimeError(friendly_ai_error(last_error, len(api_keys)))
 def srt_to_structured_cues(srt_text):
     parsed = parse_srt(srt_text)
     return [
@@ -1893,19 +1928,19 @@ def _record_login_attempt(attempt_key, success):
         connection.commit()
 
 
-def create_access_code():
-    while True:
-        code = f"KHBR-{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
-        with license_connection() as connection:
-            exists = connection.execute(
-                "SELECT 1 FROM licenses WHERE access_code_hash=? OR access_code_display=?",
-                (_hash_code(code), code),
-            ).fetchone()
-        if not exists:
-            return code
+def validate_manual_access_code(value):
+    """Validate an owner-selected reusable access code."""
+    code = normalize_access_code(value)
+    if not code:
+        raise ValueError("សូមបញ្ចូល Access Code ដែលអ្នកចង់កំណត់។")
+    if len(code) < 4 or len(code) > 64:
+        raise ValueError("Access Code ត្រូវមានចន្លោះពី 4 ដល់ 64 តួអក្សរ។")
+    if not re.fullmatch(r"[A-Z0-9_-]+", code):
+        raise ValueError("Access Code អាចប្រើតែ A-Z, 0-9, សញ្ញា - និង _ ប៉ុណ្ណោះ។")
+    return code
 
 
-def add_license(customer_name, duration_days, plan_label=""):
+def add_license(customer_name, access_code, duration_days, plan_label=""):
     name = normalize_customer_name(customer_name)
     if not name:
         raise ValueError("សូមបញ្ចូលឈ្មោះអតិថិជន។")
@@ -1925,9 +1960,15 @@ def add_license(customer_name, duration_days, plan_label=""):
     now = _utcnow()
     expires = now + datetime.timedelta(days=days)
     card_until = now + datetime.timedelta(hours=NEW_LICENSE_CARD_HOURS)
-    code = create_access_code()
+    code = validate_manual_access_code(access_code)
 
     with license_connection() as connection:
+        duplicate = connection.execute(
+            "SELECT 1 FROM licenses WHERE access_code_hash=? OR access_code_display=?",
+            (_hash_code(code), code),
+        ).fetchone()
+        if duplicate:
+            raise ValueError("Access Code នេះមានរួចហើយ។ សូមកំណត់លេខកូដផ្សេង។")
         connection.execute(
             """
             INSERT INTO licenses
@@ -2417,14 +2458,20 @@ def admin_dashboard():
             st.rerun()
 
     st.markdown("## ➕ បង្កើត Customer")
+    st.caption("Owner ជាអ្នកកំណត់ Access Code ដោយខ្លួនឯង។ Code មួយអាច Login លើ iPhone, Android និង Browser ផ្សេងៗបាន ដោយមិនចងជាមួយឧបករណ៍។")
     with st.form("create_license_form", clear_on_submit=True):
         customer_name = st.text_input("ឈ្មោះអតិថិជន")
+        manual_access_code = st.text_input(
+            "Access Code ដែល Owner ចង់កំណត់",
+            placeholder="ឧ. KHBR-001 ឬ VIP-2026-001",
+            help="អាចប្រើ A-Z, 0-9, - និង _។ មិនមាន Auto Generate ទៀតទេ។",
+        )
         duration_label = st.selectbox("រយៈពេល", ["7 ថ្ងៃ", "1 ខែ", "3 ខែ", "6 ខែ", "1 ឆ្នាំ"])
-        create_clicked = st.form_submit_button("🔑 បង្កើត Access Code", use_container_width=True)
+        create_clicked = st.form_submit_button("✅ រក្សាទុក Access Code", use_container_width=True)
     if create_clicked:
         days = {"7 ថ្ងៃ": 7, "1 ខែ": 30, "3 ខែ": 90, "6 ខែ": 180, "1 ឆ្នាំ": 365}[duration_label]
         try:
-            code, expires, card_until = add_license(customer_name, days, duration_label)
+            code, expires, card_until = add_license(customer_name, manual_access_code, days, duration_label)
             st.session_state.new_license_name = normalize_customer_name(customer_name)
             st.session_state.new_license_code = code
             st.session_state.new_license_expiry = _iso(expires)
@@ -2477,7 +2524,7 @@ def admin_dashboard():
                     update_license_status(row["id"], not bool(row["is_active"]))
                     st.rerun()
             with action_middle:
-                if st.button("ផ្តាច់ Session", key=f"disconnect_{row['id']}", use_container_width=True):
+                if st.button("សម្អាត Session ចាស់", key=f"disconnect_{row['id']}", use_container_width=True):
                     disconnect_license(row["id"])
                     st.rerun()
             with action_right:
@@ -2700,73 +2747,79 @@ with tab_video:
                 st.video(uploaded_video)
 
             if st.button("📝 Generate Khmer SRT", key="generate_srt", use_container_width=True):
-                if not api_key:
-                    st.error("សូមចុចប៊ូតុង ☰ នៅជ្រុងខាងលើឆ្វេង បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
-                else:
-                    video_path = save_upload(uploaded_video)
-                    st.session_state.project_temp_files.append(str(video_path))
-                    try:
-                        progress_bar = st.progress(1)
-                        progress_text = st.empty()
-                        started_at = time.time()
-                        progress_text.markdown("🎞️ កំពុងបង្រួមវីដេអូសម្រាប់ទាញសំឡេង…")
+                video_path = save_upload(uploaded_video)
+                st.session_state.project_temp_files.append(str(video_path))
+                progress_bar = st.progress(1)
+                progress_text = st.empty()
+                started_at = time.time()
+                try:
+                    progress_text.markdown("🎧 កំពុងទាញសំឡេង និងស្គាល់ពាក្យពីវីដេអូ…")
 
-                        # Run the AI task in another thread so the page can keep
-                        # updating the percentage and elapsed time.
-                        with ThreadPoolExecutor(max_workers=1) as executor:
-                            future = executor.submit(
-                                video_to_srt,
-                                video_path,
-                                valid_api_keys,
-                                model,
+                    # Stage 1 always works without Gemini: create source SRT once.
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(transcribe_video_to_source_srt, video_path)
+                        while not future.done():
+                            elapsed = time.time() - started_at
+                            percent = min(58, max(2, int((elapsed / max(25.0, 20.0 + size_mb * 2.0)) * 58)))
+                            minutes, seconds = divmod(int(elapsed), 60)
+                            progress_bar.progress(percent)
+                            progress_text.markdown(f"### ⏱️ {percent}% • {minutes:02d}:{seconds:02d}<br>🎧 កំពុងស្គាល់សំឡេង…", unsafe_allow_html=True)
+                            time.sleep(0.4)
+                        cues, source_srt = future.result()
+
+                    st.session_state.source_srt_text = source_srt
+
+                    if valid_api_keys:
+                        progress_bar.progress(62)
+                        progress_text.markdown("### ⏱️ 62%<br>🌐 កំពុងបកប្រែទៅភាសាខ្មែរ…", unsafe_allow_html=True)
+                        try:
+                            with ThreadPoolExecutor(max_workers=1) as executor:
+                                future = executor.submit(video_to_srt, video_path, valid_api_keys, model, cues)
+                                while not future.done():
+                                    elapsed = time.time() - started_at
+                                    percent = min(96, 62 + int((elapsed / max(40.0, 30.0 + size_mb * 2.5)) * 34))
+                                    minutes, seconds = divmod(int(elapsed), 60)
+                                    progress_bar.progress(percent)
+                                    progress_text.markdown(f"### ⏱️ {percent}% • {minutes:02d}:{seconds:02d}<br>🌐 កំពុងបកប្រែទៅភាសាខ្មែរ…", unsafe_allow_html=True)
+                                    time.sleep(0.5)
+                                generated_srt = future.result()
+                            notice = "✅ Khmer SRT បានបង្កើតរួចរាល់។"
+                        except Exception as translation_exc:
+                            # Never discard Whisper output when Gemini quota/key fails.
+                            generated_srt = source_srt
+                            notice = (
+                                "⚠️ Whisper បានបង្កើត Source SRT រួច ប៉ុន្តែ Gemini មិនអាចបកប្រែបាន។ "
+                                + friendly_ai_error(translation_exc, len(valid_api_keys))
                             )
+                    else:
+                        generated_srt = source_srt
+                        notice = "⚠️ បានបង្កើត Source SRT រួច។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។"
 
-                            # Estimate only; the real finish time depends on 4G,
-                            # video duration, Gemini processing and server load.
-                            estimated_seconds = max(45.0, min(600.0, 35.0 + (size_mb * 5.0)))
+                    st.session_state.srt_text = generated_srt
+                    st.session_state.main_srt_editor = generated_srt
+                    st.session_state.pending_srt = ""
+                    st.session_state.audio_bytes = None
+                    st.session_state.workflow_notice = notice
+                    progress_bar.progress(100)
+                    time.sleep(0.25)
+                    progress_bar.empty()
+                    progress_text.empty()
+                    st.rerun()
 
-                            while not future.done():
-                                elapsed = time.time() - started_at
-                                percent = min(
-                                    95,
-                                    max(1, int((elapsed / estimated_seconds) * 95)),
-                                )
-                                minutes = int(elapsed // 60)
-                                seconds = int(elapsed % 60)
-
-                                progress_bar.progress(percent)
-                                progress_text.markdown(
-                                    f"### ⏱️ {percent}%  •  "
-                                    f"{minutes:02d}:{seconds:02d}"
-                                )
-                                time.sleep(0.5)
-
-                            generated_srt = future.result()
-
-                        # Automatically place the completed Khmer SRT into the
-                        # existing editor when progress reaches 100%.
-                        st.session_state.srt_text = generated_srt
-                        st.session_state.main_srt_editor = generated_srt
-                        st.session_state.pending_srt = ""
-                        st.session_state.audio_bytes = None
-                        elapsed = time.time() - started_at
-                        minutes = int(elapsed // 60)
-                        seconds = int(elapsed % 60)
-
-                        # Completion indicators are temporary. Remove them immediately
-                        # so the finished SRT editor becomes the only visible result.
-                        progress_bar.empty()
-                        progress_text.empty()
-                        st.rerun()
-
-                    except Exception as exc:
-                        progress_bar.empty()
-                        progress_text.empty()
-                        st.error(f"❌ {friendly_ai_error(exc, len(valid_api_keys))}")
-                    finally:
-                        video_path.unlink(missing_ok=True)
+                except Exception as exc:
+                    progress_bar.empty()
+                    progress_text.empty()
+                    st.error(f"❌ ដំណើរការវីដេអូមិនបាន៖ {exc}")
+                finally:
+                    video_path.unlink(missing_ok=True)
 
     st.subheader("Generated SRT")
+    workflow_notice = st.session_state.pop("workflow_notice", "")
+    if workflow_notice:
+        if workflow_notice.startswith("✅"):
+            st.success(workflow_notice)
+        else:
+            st.warning(workflow_notice)
     st.caption("SRT នឹងចូលប្រអប់នេះដោយស្វ័យប្រវត្តិ ពេលដំណើរការដល់ 100%។ អ្នកអាចកែបានមុន Generate MP3។")
 
     pending_editor_update = st.session_state.pop("pending_editor_update", None)
@@ -2824,8 +2877,8 @@ with tab_video:
             if st.session_state.srt_text:
                 st.download_button(
                     "⬇️ ទាញ SRT",
-                    st.session_state.srt_text.encode("utf-8"),
-                    "khmer_story.srt",
+                    ("\ufeff" + st.session_state.srt_text).encode("utf-8"),
+                    f"{safe_download_stem(st.session_state.get('source_video_stem'), 'khmer_story')}_subtitle.srt",
                     "application/x-subrip",
                     use_container_width=True,
                 )
@@ -2919,6 +2972,9 @@ with tab_video:
         st.session_state.mp3_download_name = "khmer_story_dubbed"
         st.session_state.mp3_filename_widget = "khmer_story_dubbed"
         st.session_state.main_srt_editor = ""
+        st.session_state.source_srt_text = ""
+        st.session_state.speech_tab_audio_bytes = None
+        st.session_state.text_tab_audio_bytes = None
         st.session_state.video_uploader_version = int(st.session_state.get("video_uploader_version", 0)) + 1
 
     st.markdown('<div class="clear-wrap">', unsafe_allow_html=True)
@@ -2988,10 +3044,20 @@ with tab_srt_speech:
         else:
             try:
                 with st.spinner("កំពុងបង្កើតសំឡេង…"):
-                    st.session_state.audio_bytes = create_mp3(speech_srt)
+                    st.session_state.speech_tab_audio_bytes = create_mp3(speech_srt)
                 st.success("✅ បង្កើត MP3 រួចរាល់។")
             except Exception as exc:
                 st.error(f"❌ {exc}")
+    if st.session_state.get("speech_tab_audio_bytes"):
+        st.audio(st.session_state.speech_tab_audio_bytes, format="audio/mp3")
+        st.download_button(
+            "⬇️ ទាញយក MP3",
+            st.session_state.speech_tab_audio_bytes,
+            "khmer_srt_speech.mp3",
+            "audio/mpeg",
+            key="download_srt_speech_mp3",
+            use_container_width=True,
+        )
 
 with tab_text_speech:
     st.header("Text → Speech")
@@ -3009,9 +3075,19 @@ with tab_text_speech:
                 with tempfile.TemporaryDirectory() as folder:
                     output = Path(folder) / "speech.mp3"
                     run_async(synthesize(plain_text.strip(), VOICE_PROFILES[voice_choice], output))
-                    st.session_state.audio_bytes = output.read_bytes()
+                    st.session_state.text_tab_audio_bytes = output.read_bytes()
                 st.success("✅ បង្កើតសំឡេងរួចរាល់។")
             except Exception as exc:
                 st.error(f"❌ {exc}")
+    if st.session_state.get("text_tab_audio_bytes"):
+        st.audio(st.session_state.text_tab_audio_bytes, format="audio/mp3")
+        st.download_button(
+            "⬇️ ទាញយក MP3",
+            st.session_state.text_tab_audio_bytes,
+            "khmer_text_speech.mp3",
+            "audio/mpeg",
+            key="download_text_speech_mp3",
+            use_container_width=True,
+        )
 
 st.caption("AI-KHEMRA-BRO • Chinese Story Translation • Mobile-first")
