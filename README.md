@@ -1,10 +1,24 @@
-# AI KHEMRA BRO v6.2
+# AI KHEMRA BRO v7.0 — Character & Audio Lock
 
-Main fix: Gemini model compatibility for Video → Whisper → Khmer SRT → MP3.
+## New features
 
-- Defaults to `gemini-3.5-flash-lite`.
-- Automatic fallback to other supported Flash models.
-- Keeps Chinese source transcription separate from Khmer SRT.
-- MP3 generation requires valid Khmer subtitle text.
+- Character Identity Lock for stable speaker labels across nearby cues.
+- Clear age/voice groups: BOY, GIRL, M_YOUNG, F_YOUNG, M_ADULT, F_ADULT, M_OLD, F_OLD.
+- Separate inner-thought and narrator tags.
+- Stronger natural spoken Khmer translation rules.
+- Crowd-scene speaker rules to reduce label confusion and duplicated dialogue.
+- Subtitle quality checker for Chinese leakage, invalid timing, overlaps, invalid tags, and lines likely to be cut.
+- Smoother MP3 processing with softer fades, smaller protected gaps, improved loudness stability, and a higher safe tempo ceiling to reduce hard-cut endings.
 
-Deploy by replacing `app.py`, keeping `requirements.txt` and `packages.txt`, then redeploying the service.
+## Install
+
+1. Rename `AI_KHEMRA_BRO_v7.0_CHARACTER_AUDIO_LOCK.py` to `app.py`.
+2. Replace the old `app.py`, `requirements.txt`, `packages.txt`, and README in the hosting project.
+3. Keep your existing Streamlit Secrets/API keys unchanged.
+4. Redeploy or restart the service.
+
+## Start command
+
+```bash
+streamlit run app.py --server.address 0.0.0.0 --server.port $PORT
+```
