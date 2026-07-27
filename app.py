@@ -1,4 +1,3 @@
-# AI KHEMRA BRO - Fast Translation Upgrade v5.6
 import asyncio
 import base64
 import datetime
@@ -1393,12 +1392,9 @@ def _candidate_gemini_models(selected_model):
     """
     ordered = [
         str(selected_model or "").strip(),
-        # Fast current model first. The rolling alias remains the safest fallback
-        # when a project has not yet received access to a newly released model.
-        "gemini-3.5-flash",
-        "gemini-flash-latest",
-        "gemini-2.5-flash-lite",
         "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-flash-latest",
     ]
     result = []
     for name in ordered:
@@ -1462,10 +1458,8 @@ CUES:
 def translate_cues_text_only(client, model_name, cues):
     """Low-request translation path designed for free-tier Gemini keys."""
     translated = {}
-    # Fast Flash models handle larger subtitle batches well. Fewer API calls
-    # noticeably reduce total translation time while keeping repair batches small.
-    normalized_model = str(model_name or "").lower()
-    batch_size = 60 if ("3.5-flash" in normalized_model or "flash-latest" in normalized_model) else 45
+    # Larger batches reduce request count and 429 failures.
+    batch_size = 45
     for offset in range(0, len(cues), batch_size):
         batch = cues[offset:offset + batch_size]
         context_rows = []
@@ -2816,7 +2810,7 @@ if "api_keys_manager" not in st.session_state:
 for state_key, default_value in {
     "target_language": "Khmer (ខ្មែរ)",
     "translation_style": "🔴 Chinese Drama Pro",
-    "model_selector": "gemini-3.5-flash",
+    "model_selector": "gemini-2.5-flash",
     "lite_mode": True,
     "api_saved_notice": False,
 }.items():
@@ -2848,13 +2842,12 @@ with st.container(key="api_menu_container"):
         st.selectbox(
             "🤖 Gemini Model",
             [
-                "gemini-3.5-flash",
-                "gemini-flash-latest",
-                "gemini-2.5-flash-lite",
                 "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-flash-latest",
             ],
             key="model_selector",
-            help="gemini-3.5-flash គឺជាជម្រើសលឿន។ App នឹងសាកម៉ូឌែលបម្រុងដោយស្វ័យប្រវត្តិ ប្រសិនបើម៉ូឌែលមួយ 404, quota ពេញ ឬមិនអាចប្រើបាន។",
+            help="App នឹងសាកម៉ូឌែលបម្រុងដោយស្វ័យប្រវត្តិ ប្រសិនបើម៉ូឌែលមួយ 404 ឬមិនអាចប្រើបាន។",
         )
         st.toggle("📶 4G Lite Mode", key="lite_mode")
 
