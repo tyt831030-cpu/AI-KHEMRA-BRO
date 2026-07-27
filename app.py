@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "6.2"
+APP_VERSION = "7.0"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -421,10 +421,10 @@ VOICE_PROFILES={
 }
 
 # Smooth-dubbing controls: gentle fades remove clicks/cuts when speaker labels change.
-VOICE_FADE_IN_SECONDS = 0.045
-VOICE_FADE_OUT_SECONDS = 0.070
-MIN_VOICE_GAP_MS = 12
-MAX_TEMPO_SPEED = 1.65
+VOICE_FADE_IN_SECONDS = 0.028
+VOICE_FADE_OUT_SECONDS = 0.095
+MIN_VOICE_GAP_MS = 6
+MAX_TEMPO_SPEED = 1.92
 
 TRANSLATE_PROMPT = """You are an expert Khmer movie subtitler, Chinese-drama translator, dubbing script writer, and character-continuity editor.
 The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
@@ -447,6 +447,17 @@ SPEAKER AND CHARACTER RULES:
 - Use M_THINK or F_THINK only for an unheard inner thought or internal monologue.
 - Use NARRATOR tags only for true off-screen narration, not for a character's thought.
 - Use BOY/GIRL and M_OLD/F_OLD only when age is clearly supported; otherwise prefer M_YOUNG/F_YOUNG or M_ADULT/F_ADULT.
+
+CHARACTER ROLE MEMORY, CROWD-SCENE, AND LABEL LOCK:
+- Build a silent character map before translating: recurring face/voice, gender, approximate age group, social role, relationship, speaking style, and current emotion. Reuse that identity throughout the scene.
+- A recurring character MUST keep the same label across consecutive and nearby cues. Never switch BOY/GIRL/M_YOUNG/F_YOUNG/M_ADULT/F_ADULT/M_OLD/F_OLD because of camera cuts, loudness, crying, shouting, whispering, distance, music, or noise.
+- Change a label only when there is clear evidence that a different person begins speaking. When uncertain, preserve the previous confirmed identity instead of guessing a new one.
+- In a crowd scene, identify the dominant audible speaker for each cue from lip movement, voice direction, timing, and surrounding dialogue. Never assign the label from the most visible face if another person is actually speaking.
+- When multiple people speak at once, keep the supplied cue boundaries and translate only the intelligible speech belonging to that cue. Do not invent a combined speaker, do not merge speakers, and do not duplicate the same line across cues.
+- Child dialogue must sound like a real child and use BOY/GIRL. Teen or young-adult dialogue uses M_YOUNG/F_YOUNG. Ordinary adults use M_ADULT/F_ADULT. Elderly speakers use M_OLD/F_OLD only when voice and context clearly support old age.
+- Thoughts and narration are modes, not age guesses: use M_THINK/F_THINK only for inner monologue and NARRATOR_M/NARRATOR_F only for true narration.
+- Keep names, titles, kinship terms, pronouns, and formality consistent for the same pair of characters across the whole scene.
+- Before returning JSON, perform a silent continuity check over the previous cue, current cue, and next cue. Correct accidental label flips and repeated/omitted dialogue.
 
 PROFESSIONAL KHMER TRANSLATION RULES:
 - Translate into smooth, natural spoken Khmer that Cambodian people actually use in everyday conversation and movie dialogue.
@@ -487,6 +498,9 @@ KHMER DUBBING QUALITY RULES:
 - Avoid repeating the same words in consecutive subtitles unless the repetition is intentional.
 - If a direct translation sounds unnatural, reshape it into natural Khmer conversation.
 - Make every subtitle easy for Khmer AI voices to pronounce with natural rhythm and breathing.
+- Keep each cue compact enough to be spoken without rushing or being cut. Prefer concise natural Khmer over long literal wording.
+- In rapid multi-speaker scenes, preserve the exact meaning but shorten syntax, remove only redundant wording, and keep every negation, name, number, command, and meaningful reaction.
+- Avoid punctuation patterns that make TTS jump in pitch. Use one clear punctuation mark at the end and only essential internal pauses.
 - The final dialogue should sound as if it was originally written and performed in Khmer.
 - Before returning each subtitle, silently ask: “Would a Cambodian naturally say this in a real conversation or movie?” If not, rewrite it.
 
@@ -1488,6 +1502,47 @@ def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
         )
     return "\n\n".join(blocks)
 
+TAG_ALIASES = {
+    'OLD_M': 'M_OLD', 'OLD_F': 'F_OLD',
+    'MALE': 'M_ADULT', 'FEMALE': 'F_ADULT',
+    'MAN': 'M_ADULT', 'WOMAN': 'F_ADULT',
+    'CHILD_M': 'BOY', 'CHILD_F': 'GIRL',
+}
+
+VALID_SPEAKER_TAGS = set(VOICE_PROFILES)
+
+
+def normalize_speaker_tag(tag):
+    """Return one canonical speaker tag without inventing age or gender."""
+    value = str(tag or 'M_ADULT').upper().strip()
+    value = TAG_ALIASES.get(value, value)
+    return value if value in VALID_SPEAKER_TAGS else 'M_ADULT'
+
+
+def subtitle_quality_report(srt_text):
+    """Validate tags, timing, Chinese leakage, and lines likely to be cut."""
+    cues = parse_srt(srt_text)
+    issues = []
+    previous_start = -1
+    previous_end = -1
+    for index, cue in enumerate(cues, start=1):
+        duration_ms = max(1, cue['end'] - cue['start'])
+        words = len([part for part in re.split(r'\s+', cue['text']) if part])
+        max_words = max(2, int((duration_ms / 1000.0) * 3.15) + 1)
+        if cue['start'] < previous_start:
+            issues.append(f'បន្ទាត់ {index}: timestamp មិនតាមលំដាប់។')
+        if cue['start'] < previous_end:
+            issues.append(f'បន្ទាត់ {index}: timestamp ជាន់ជាមួយបន្ទាត់មុន។')
+        if contains_cjk(cue['text']):
+            issues.append(f'បន្ទាត់ {index}: នៅមានអក្សរចិន។')
+        if words > max_words:
+            issues.append(f'បន្ទាត់ {index}: ប្រយោគវែង ({words} ពាក្យ / គួរតែប្រហែល {max_words}) អាចធ្វើឱ្យសំឡេងដាច់។')
+        if cue['tag'] not in VALID_SPEAKER_TAGS:
+            issues.append(f'បន្ទាត់ {index}: ស្លាកសំឡេងមិនត្រឹមត្រូវ។')
+        previous_start, previous_end = cue['start'], cue['end']
+    return issues
+
+
 def parse_srt(srt_text):
     time_re=re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
     tag_re=re.compile(r'^\[(BOY|GIRL|M_YOUNG|F_YOUNG|M_ADULT|F_ADULT|M_OLD|F_OLD|M_THINK|F_THINK|NARRATOR_M|NARRATOR_F|M|F|OLD_M|OLD_F)\]\s*',re.I)
@@ -1501,7 +1556,7 @@ def parse_srt(srt_text):
         match=time_re.search(lines[idx])
         if not match: continue
         dialogue=' '.join(lines[idx+1:]).strip(); tag_match=tag_re.match(dialogue)
-        tag=tag_match.group(1).upper() if tag_match else 'M_ADULT'
+        tag=normalize_speaker_tag(tag_match.group(1)) if tag_match else 'M_ADULT'
         if tag_match: dialogue=dialogue[tag_match.end():].strip()
         if dialogue:
             start_ms=to_ms(match.groups()[:4]); end_ms=to_ms(match.groups()[4:])
@@ -1613,6 +1668,11 @@ def create_mp3(srt_text, progress_callback=None):
     if not cues:
         raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
 
+    quality_issues = subtitle_quality_report(srt_text)
+    severe_issues = [issue for issue in quality_issues if 'អក្សរចិន' in issue or 'timestamp មិនតាមលំដាប់' in issue]
+    if severe_issues:
+        raise ValueError('SRT មិនទាន់អាចបង្កើតសំឡេងបាន៖\n- ' + '\n- '.join(severe_issues[:20]))
+
     chinese_rows = [i + 1 for i, cue in enumerate(cues) if contains_cjk(cue['text'])]
     if chinese_rows:
         raise ValueError(
@@ -1677,8 +1737,8 @@ def create_mp3(srt_text, progress_callback=None):
             rendered_seconds = audio_seconds / safe_speed
             trim_seconds = min(rendered_seconds, slot_seconds)
 
-            fade_in = min(VOICE_FADE_IN_SECONDS, max(0.015, trim_seconds * 0.10))
-            fade_out = min(VOICE_FADE_OUT_SECONDS, max(0.025, trim_seconds * 0.14))
+            fade_in = min(VOICE_FADE_IN_SECONDS, max(0.010, trim_seconds * 0.06))
+            fade_out = min(VOICE_FADE_OUT_SECONDS, max(0.035, trim_seconds * 0.18))
             fade_out_start = max(0.01, trim_seconds - fade_out)
 
             label = f'a{index}'
@@ -1727,7 +1787,7 @@ def create_mp3(srt_text, progress_callback=None):
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
               'acompressor=threshold=-18dB:ratio=1.55:attack=18:release=240:makeup=1.0:knee=5,'
               'alimiter=limit=0.94:attack=8:release=150,'
-              'loudnorm=I=-16:TP=-1.5:LRA=7,'
+              'loudnorm=I=-16:TP=-1.5:LRA=9,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
