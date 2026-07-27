@@ -3,7 +3,6 @@ import base64
 import datetime
 import hashlib
 import hmac
-import json
 import os
 import re
 import secrets
@@ -28,7 +27,7 @@ try:
 except Exception:
     imageio_ffmpeg = None
 
-APP_VERSION = "7.4.1"
+APP_VERSION = "7.4"
 
 
 
@@ -1007,8 +1006,8 @@ def upload_for_context(client, video_path):
 def parse_json_array(raw_text):
     import json
     cleaned = (raw_text or "").strip()
-    cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned, flags=re.I)
-    cleaned = re.sub(r"\\s*```$", "", cleaned)
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
     left, right = cleaned.find("["), cleaned.rfind("]")
     if left == -1 or right == -1 or right <= left:
         raise ValueError("AI មិនបានត្រឡប់ JSON ត្រឹមត្រូវ។")
@@ -1393,12 +1392,9 @@ def _candidate_gemini_models(selected_model):
     """
     ordered = [
         str(selected_model or "").strip(),
-        "gemini-3.5-flash-lite",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-flash-latest",
-        "gemini-2.5-flash-lite",
         "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-flash-latest",
     ]
     result = []
     for name in ordered:
@@ -1424,9 +1420,10 @@ STRICT RULES:
 2. Return every input ID exactly once and in the same order.
 3. Never change, merge, split, or invent IDs.
 4. Do not omit short replies, names, numbers, negations, fillers, cries, or reactions.
-5. Output ONLY Cambodian Khmer Unicode (characters in the Khmer block U+1780–U+17FF).
-   Thai script is strictly forbidden. Chinese, Vietnamese, English, pinyin, and Latin-letter dialogue are forbidden.
-   Before returning JSON, inspect every text value and rewrite it if it contains any non-Khmer language.
+5. In each JSON object's "text" value, output Cambodian Khmer dialogue only.
+   JSON keys and the required speaker tag may use Latin letters, but the dialogue text may not.
+   Thai script, Chinese characters, Vietnamese, English, and pinyin are forbidden inside "text".
+   Before returning JSON, inspect every "text" value and rewrite it if it contains any non-Khmer language.
 6. Keep each line concise enough for its timestamp, but preserve the full meaning.
 7. Select one tag: M_ADULT, F_ADULT, M_OLD, F_OLD, BOY, GIRL,
    M_THINK, F_THINK, NARRATOR_M, NARRATOR_F.
@@ -1509,6 +1506,29 @@ def translate_cues_text_only(client, model_name, cues):
     return translated
 
 
+def validate_khmer_srt_output(srt_text, expected_count=None):
+    """Reject source-language leakage before Khmer SRT reaches the editor/download."""
+    text = clean_srt(srt_text)
+    if not text or "-->" not in text:
+        raise RuntimeError("Khmer SRT ទទេ ឬទម្រង់មិនត្រឹមត្រូវ។")
+    blocks = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
+    if expected_count is not None and len(blocks) != int(expected_count):
+        raise RuntimeError(
+            f"Khmer SRT មិនគ្រប់បន្ទាត់៖ បាន {len(blocks)} / ត្រូវការ {expected_count}។"
+        )
+    for position, block in enumerate(blocks, start=1):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if len(lines) < 3 or "-->" not in lines[1]:
+            raise RuntimeError(f"ទម្រង់ SRT ខូចនៅបន្ទាត់ {position}។")
+        dialogue = " ".join(lines[2:])
+        dialogue = re.sub(r"^\[[A-Z_]+\]\s*", "", dialogue).strip()
+        if not is_valid_khmer_dialogue(dialogue):
+            raise RuntimeError(
+                f"បន្ទាត់ {position} នៅមានអក្សរចិន/ថៃ/អង់គ្លេស ឬមិនមែនជាខ្មែរត្រឹមត្រូវ។"
+            )
+    return text
+
+
 def video_to_srt(video_path, api_keys, model, prepared_cues=None):
     """
     Reliable v5.5 path:
@@ -1538,9 +1558,7 @@ def video_to_srt(video_path, api_keys, model, prepared_cues=None):
             try:
                 translated = translate_cues_text_only(client, model_name, cues)
                 result = build_srt(cues, translated)
-                if not result.strip() or "-->" not in result:
-                    raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
-                return result
+                return validate_khmer_srt_output(result, expected_count=len(cues))
             except Exception as exc:
                 last_error = exc
                 message = str(exc).upper()
@@ -1649,22 +1667,12 @@ def subtitle_quality_report(srt_text):
             issues.append(f'បន្ទាត់ {index}: timestamp ជាន់ជាមួយបន្ទាត់មុន។')
         if contains_cjk(cue['text']):
             issues.append(f'បន្ទាត់ {index}: នៅមានអក្សរចិន។')
-        if contains_thai(cue['text']):
-            issues.append(f'បន្ទាត់ {index}: នៅមានអក្សរថៃ។')
-        if contains_vietnamese_or_latin_words(cue['text']):
-            issues.append(f'បន្ទាត់ {index}: នៅមានអក្សរឡាតាំង/ភាសាបរទេស។')
         if words > max_words:
             issues.append(f'បន្ទាត់ {index}: ប្រយោគវែង ({words} ពាក្យ / គួរតែប្រហែល {max_words}) អាចធ្វើឱ្យសំឡេងដាច់។')
         if cue['tag'] not in VALID_SPEAKER_TAGS:
             issues.append(f'បន្ទាត់ {index}: ស្លាកសំឡេងមិនត្រឹមត្រូវ។')
         previous_start, previous_end = cue['start'], cue['end']
     return issues
-
-
-def srt_fingerprint(srt_text):
-    """Stable fingerprint used to prevent downloading stale audio after SRT edits."""
-    normalized = clean_srt(str(srt_text or "")).strip()
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest() if normalized else ""
 
 
 def parse_srt(srt_text):
@@ -1771,26 +1779,6 @@ def atempo_chain(speed):
     return ",".join(f"atempo={value:.5f}" for value in factors)
 
 
-async def synthesize_clip_batch(batch, cache):
-    """Generate a small batch concurrently while reusing identical voice lines."""
-    async def one(item):
-        index, cue, profile, clip = item
-        cache_key = (
-            prepare_tts_text(cue.get('text', '')),
-            profile.get('voice', ''), profile.get('rate', ''),
-            profile.get('pitch', ''), profile.get('volume', ''),
-        )
-        cached = cache.get(cache_key)
-        if cached:
-            clip.write_bytes(cached)
-            return index
-        await synthesize(cue['text'], profile, clip)
-        cache[cache_key] = clip.read_bytes()
-        return index
-
-    await asyncio.gather(*(one(item) for item in batch))
-
-
 def create_mp3(srt_text, progress_callback=None):
     """
     Create one synchronized Khmer MP3.
@@ -1807,7 +1795,7 @@ def create_mp3(srt_text, progress_callback=None):
         raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
 
     quality_issues = subtitle_quality_report(srt_text)
-    severe_issues = [issue for issue in quality_issues if any(marker in issue for marker in ('អក្សរចិន', 'អក្សរថៃ', 'អក្សរឡាតាំង', 'timestamp មិនតាមលំដាប់'))]
+    severe_issues = [issue for issue in quality_issues if 'អក្សរចិន' in issue or 'timestamp មិនតាមលំដាប់' in issue]
     if severe_issues:
         raise ValueError('SRT មិនទាន់អាចបង្កើតសំឡេងបាន៖\n- ' + '\n- '.join(severe_issues[:20]))
 
@@ -1827,29 +1815,19 @@ def create_mp3(srt_text, progress_callback=None):
         if progress_callback:
             progress_callback(2, "កំពុងរៀបចំសំឡេងតួអង្គ…")
 
-        # Edge-TTS is network-bound. Generate three clips at a time for a
-        # noticeable speed-up on phones while keeping requests conservative.
-        synthesis_cache = {}
-        batch_size = max(1, min(3, int(os.getenv('TTS_CONCURRENCY', '3'))))
-        prepared = []
         for index, cue in enumerate(cues):
             clip = root / f'clip_{index:04d}.mp3'
             profile = VOICE_PROFILES.get(cue['tag'], VOICE_PROFILES['M_ADULT'])
+            run_async(synthesize(cue['text'], profile, clip))
             clips.append(clip)
-            prepared.append((index, cue, profile, clip))
+            clip_durations.append(probe_audio_duration(clip))
 
-        for offset in range(0, total_cues, batch_size):
-            batch = prepared[offset:offset + batch_size]
-            run_async(synthesize_clip_batch(batch, synthesis_cache))
-            completed = min(total_cues, offset + len(batch))
             if progress_callback:
-                percent = 5 + int((completed / total_cues) * 82)
+                percent = 5 + int(((index + 1) / total_cues) * 82)
                 progress_callback(
                     min(percent, 87),
-                    f"កំពុងបង្កើតសំឡេងខ្មែរ {completed}/{total_cues}…",
+                    f"កំពុងបង្កើតសំឡេងខ្មែរ {index + 1}/{total_cues}…",
                 )
-
-        clip_durations = [probe_audio_duration(clip) for clip in clips]
 
         command = ['-y']
         for clip in clips:
@@ -2832,7 +2810,7 @@ if "api_keys_manager" not in st.session_state:
 for state_key, default_value in {
     "target_language": "Khmer (ខ្មែរ)",
     "translation_style": "🔴 Chinese Drama Pro",
-    "model_selector": "gemini-3.5-flash-lite",
+    "model_selector": "gemini-2.5-flash",
     "lite_mode": True,
     "api_saved_notice": False,
 }.items():
@@ -2864,9 +2842,8 @@ with st.container(key="api_menu_container"):
         st.selectbox(
             "🤖 Gemini Model",
             [
-                "gemini-3.5-flash-lite",
-                "gemini-3.6-flash",
-                "gemini-3.5-flash",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
                 "gemini-flash-latest",
             ],
             key="model_selector",
@@ -3010,15 +2987,16 @@ with tab_video:
                                 generated_srt = future.result()
                             notice = "✅ Khmer SRT បានបង្កើតរួចរាល់។"
                         except Exception as translation_exc:
-                            # Never discard Whisper output when Gemini quota/key fails.
-                            generated_srt = source_srt
+                            # Preserve the Chinese transcription separately, but NEVER put it
+                            # inside the Khmer editor or allow it to download as Khmer SRT.
+                            generated_srt = ""
                             notice = (
-                                "⚠️ Whisper បានបង្កើត Source SRT រួច ប៉ុន្តែ Gemini មិនអាចបកប្រែបាន។ "
+                                "⚠️ បានចម្លងសំឡេងពីវីដេអូជាអក្សរដើមរួច ប៉ុន្តែការបកប្រែទៅខ្មែរមិនទាន់ជោគជ័យ។ "
                                 + friendly_ai_error(translation_exc, len(valid_api_keys))
                             )
                     else:
-                        generated_srt = source_srt
-                        notice = "⚠️ បានបង្កើត Source SRT រួច។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។"
+                        generated_srt = ""
+                        notice = "⚠️ បានចម្លងសំឡេងពីវីដេអូរួច។ សូមដាក់ Gemini API Key ដើម្បីបង្កើត Khmer SRT។"
 
                     st.session_state.srt_text = generated_srt
                     st.session_state.main_srt_editor = generated_srt
@@ -3062,26 +3040,6 @@ with tab_video:
         key="main_srt_editor",
     )
     st.session_state.srt_text = st.session_state.main_srt_editor
-
-    # Never keep an old MP3 after the user edits the subtitle text.
-    current_srt_fingerprint = srt_fingerprint(st.session_state.srt_text)
-    previous_audio_fingerprint = st.session_state.get("audio_srt_fingerprint", "")
-    if st.session_state.get("audio_bytes") and previous_audio_fingerprint != current_srt_fingerprint:
-        st.session_state.audio_bytes = None
-        st.session_state.audio_srt_fingerprint = ""
-        st.info("ℹ️ SRT ត្រូវបានកែ។ សូម Generate MP3 ម្តងទៀត ដើម្បីឲ្យសំឡេងត្រូវនឹងអត្ថបទថ្មី។")
-
-    # Lightweight quality check without adding another workflow button.
-    editor_issues = subtitle_quality_report(st.session_state.srt_text) if st.session_state.srt_text.strip() else []
-    if st.session_state.srt_text.strip():
-        if editor_issues:
-            with st.expander(f"⚠️ ពិនិត្យ SRT៖ រកឃើញ {len(editor_issues)} ចំណុច", expanded=False):
-                for issue in editor_issues[:30]:
-                    st.write("• " + issue)
-                if len(editor_issues) > 30:
-                    st.caption(f"មានបញ្ហាបន្ថែម {len(editor_issues) - 30} ចំណុច។")
-        else:
-            st.success("✅ SRT ត្រឹមត្រូវសម្រាប់បង្កើត MP3។")
 
     # Keep both SRT action buttons on one row directly below the editor,
     # including portrait and landscape mobile screens.
@@ -3169,7 +3127,6 @@ with tab_video:
                         st.session_state.srt_text,
                         progress_callback=update_audio_progress,
                     )
-                    st.session_state.audio_srt_fingerprint = srt_fingerprint(st.session_state.srt_text)
                     # Clear the processing display immediately after completion.
                     progress_bar.empty()
                     progress_text.empty()
@@ -3212,7 +3169,6 @@ with tab_video:
         st.session_state.srt_text = ""
         st.session_state.pending_srt = ""
         st.session_state.audio_bytes = None
-        st.session_state.audio_srt_fingerprint = ""
         st.session_state.audio_job_pending = False
         st.session_state.pending_editor_update = ""
         st.session_state.source_video_stem = "khmer_story"
