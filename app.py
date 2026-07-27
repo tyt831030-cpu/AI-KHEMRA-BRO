@@ -1,8 +1,12 @@
 import asyncio
 import base64
 import datetime
+import asyncio
+import base64
+import datetime
 import hashlib
 import hmac
+import os
 import re
 import secrets
 import sqlite3
@@ -21,7 +25,57 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "7.0"
+try:
+    import imageio_ffmpeg
+except Exception:
+    imageio_ffmpeg = None
+
+APP_VERSION = "7.1"
+
+
+
+def resolve_ffmpeg_executable():
+    """Return a usable FFmpeg binary on Streamlit Cloud, Railway, Render, or local machines."""
+    configured = os.getenv("FFMPEG_BINARY", "").strip()
+    candidates = [configured, shutil.which("ffmpeg")]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return str(candidate)
+    if imageio_ffmpeg is not None:
+        try:
+            candidate = imageio_ffmpeg.get_ffmpeg_exe()
+            if candidate and Path(candidate).exists():
+                return str(candidate)
+        except Exception:
+            pass
+    raise RuntimeError(
+        "FFmpeg មិនត្រូវបានដំឡើងនៅលើ Server ទេ។ "
+        "សូមដាក់ Dockerfile/packages.txt ឬដំឡើង imageio-ffmpeg។"
+    )
+
+
+def run_ffmpeg(arguments, *, timeout=600):
+    """Run FFmpeg through the resolved binary and return CompletedProcess."""
+    executable = resolve_ffmpeg_executable()
+    return subprocess.run(
+        [executable, *arguments],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def ffmpeg_status():
+    """Small startup diagnostic used by the UI and error messages."""
+    try:
+        executable = resolve_ffmpeg_executable()
+        result = subprocess.run(
+            [executable, "-version"], capture_output=True, text=True, timeout=20
+        )
+        first_line = (result.stdout or result.stderr).splitlines()[0]
+        return True, executable, first_line
+    except Exception as exc:
+        return False, "", str(exc)
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -796,9 +850,9 @@ def seconds_to_srt(value):
 
 def optimize_video_for_processing(source_path, output_path):
     """Create a small 480p proxy to reduce server RAM, disk and Gemini upload size."""
-    result = subprocess.run(
+    result = run_ffmpeg(
         [
-            "ffmpeg", "-y", "-i", str(source_path),
+            "-y", "-i", str(source_path),
             "-map", "0:v:0", "-map", "0:a:0?",
             "-vf", "scale='min(480,iw)':-2,fps=12",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "32",
@@ -827,9 +881,9 @@ def extract_audio(video_path, audio_path):
         "acompressor=threshold=-30dB:ratio=2.2:attack=12:release=180:makeup=1.35,"
         "alimiter=limit=0.97"
     )
-    result = subprocess.run(
+    result = run_ffmpeg(
         [
-            "ffmpeg", "-y", "-i", str(video_path),
+            "-y", "-i", str(video_path),
             "-vn", "-ac", "1", "-ar", "16000",
             "-af", audio_filter,
             "-c:a", "flac", "-compression_level", "8", str(audio_path),
@@ -1625,20 +1679,14 @@ def character_voice_filters(tag):
 
 
 def probe_audio_duration(path):
-    result = subprocess.run(
-        [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr[-500:] or "FFprobe failed.")
-    return max(0.01, float(result.stdout.strip()))
+    """Read duration with FFmpeg itself, avoiding a separate ffprobe dependency."""
+    result = run_ffmpeg(["-hide_banner", "-i", str(path)], timeout=30)
+    output = (result.stderr or "") + "\n" + (result.stdout or "")
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
+    if not match:
+        raise RuntimeError("មិនអាចអានរយៈពេលសំឡេងបានទេ។")
+    hours, minutes, seconds = match.groups()
+    return max(0.01, int(hours) * 3600 + int(minutes) * 60 + float(seconds))
 
 
 def atempo_chain(speed):
@@ -1703,7 +1751,7 @@ def create_mp3(srt_text, progress_callback=None):
                     f"កំពុងបង្កើតសំឡេងខ្មែរ {index + 1}/{total_cues}…",
                 )
 
-        command = ['ffmpeg', '-y']
+        command = ['-y']
         for clip in clips:
             command.extend(['-i', str(clip)])
 
@@ -1805,7 +1853,7 @@ def create_mp3(srt_text, progress_callback=None):
         if progress_callback:
             progress_callback(92, "កំពុងបញ្ចូលសំឡេងទាំងអស់ជាបទ MP3 តែមួយ…")
 
-        result = subprocess.run(command, capture_output=True, text=True, timeout=900)
+        result = run_ffmpeg(command, timeout=900)
         if result.returncode != 0:
             raise RuntimeError(result.stderr[-2200:] or 'FFmpeg failed.')
         if not output.exists() or output.stat().st_size < 1000:
