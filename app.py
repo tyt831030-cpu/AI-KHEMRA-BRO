@@ -1237,6 +1237,153 @@ def video_to_srt(video_path, api_keys, model):
         raise RuntimeError(friendly_ai_error(last_error, len(api_keys)))
 
 
+
+# ---------------------------------------------------------------------------
+# v5.4 reliable Khmer SRT pipeline
+# ---------------------------------------------------------------------------
+def _candidate_gemini_models(selected_model):
+    """Prefer the light text model and keep compatible fallbacks."""
+    ordered = [
+        str(selected_model or "").strip(),
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash",
+    ]
+    result = []
+    for name in ordered:
+        if name and name not in result:
+            result.append(name)
+    return result
+
+
+def _translate_batch_text_only(client, model_name, batch, previous_context=""):
+    """Translate Whisper text only. This avoids costly video upload requests."""
+    cue_lines = "\n".join(
+        f'ID={cue["id"]} | TIME={seconds_to_srt(cue["start"])} --> '
+        f'{seconds_to_srt(cue["end"])} | SOURCE={cue["source"]}'
+        for cue in batch
+    )
+    prompt = f"""
+You are the Khmer subtitle translation engine for AI KHEMRA BRO.
+Translate every SOURCE line into natural spoken Khmer for movie dubbing.
+
+STRICT RULES:
+1. Return JSON array only. No markdown and no explanation.
+2. Return every input ID exactly once and in the same order.
+3. Never change, merge, split, or invent IDs.
+4. Do not omit short replies, names, numbers, negations, fillers, cries, or reactions.
+5. Output Khmer only in text. Do not leave Chinese, Thai, Vietnamese, or English dialogue.
+6. Keep each line concise enough for its timestamp, but preserve the full meaning.
+7. Select one tag: M_ADULT, F_ADULT, M_OLD, F_OLD, BOY, GIRL,
+   M_THINK, F_THINK, NARRATOR_M, NARRATOR_F.
+8. JSON format: [{{"id":1,"tag":"M_ADULT","text":"..."}}]
+
+RECENT CONTEXT:
+{previous_context or '(none)'}
+
+CUES:
+{cue_lines}
+""".strip()
+    response = gemini_generate_with_retry(client, model_name, [prompt], attempts=3)
+    rows = parse_json_array(response.text or "")
+    allowed_ids = {cue["id"] for cue in batch}
+    parsed = {}
+    for row in rows:
+        try:
+            cue_id = int(row.get("id"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if cue_id not in allowed_ids:
+            continue
+        tag = str(row.get("tag", "M_ADULT")).upper().strip()
+        if tag not in VOICE_PROFILES:
+            tag = "M_ADULT"
+        dialogue = normalize_dialogue(row.get("text", ""))
+        if dialogue and not contains_cjk(dialogue):
+            parsed[cue_id] = {"tag": tag, "text": dialogue}
+    return parsed
+
+
+def translate_cues_text_only(client, model_name, cues):
+    """Low-request translation path designed for free-tier Gemini keys."""
+    translated = {}
+    # Larger batches reduce request count and 429 failures.
+    batch_size = 45
+    for offset in range(0, len(cues), batch_size):
+        batch = cues[offset:offset + batch_size]
+        context_rows = []
+        for cue in cues[max(0, offset - 5):offset]:
+            item = translated.get(cue["id"])
+            if item:
+                context_rows.append(
+                    f'ID={cue["id"]} TAG={item["tag"]} SOURCE={cue["source"]} KHMER={item["text"]}'
+                )
+        parsed = _translate_batch_text_only(
+            client, model_name, batch, "\n".join(context_rows)
+        )
+        translated.update(parsed)
+
+        missing = [cue for cue in batch if cue["id"] not in translated]
+        if missing:
+            # One compact repair request, only for missing lines.
+            repaired = _translate_batch_text_only(client, model_name, missing)
+            translated.update(repaired)
+
+        still_missing = [cue["id"] for cue in batch if cue["id"] not in translated]
+        if still_missing:
+            raise RuntimeError(
+                "AI មិនបានត្រឡប់បន្ទាត់ SRT គ្រប់គ្រាន់៖ "
+                + ", ".join(map(str, still_missing[:20]))
+            )
+    return translated
+
+
+def video_to_srt(video_path, api_keys, model):
+    """
+    Reliable v5.4 path:
+    FFmpeg -> Whisper timestamps -> text-only Gemini translation -> Khmer SRT.
+    It does not upload the video to Gemini, so it uses far fewer tokens and requests.
+    """
+    if isinstance(api_keys, str):
+        api_keys = [api_keys]
+    api_keys = [str(key).strip() for key in api_keys if str(key).strip()]
+    if not api_keys:
+        raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
+
+    with tempfile.TemporaryDirectory() as folder:
+        folder_path = Path(folder)
+        audio_path = folder_path / "audio_16k.flac"
+        extract_audio(Path(video_path), audio_path)
+        cues = transcribe_with_whisper(audio_path)
+        if not cues:
+            raise RuntimeError("Whisper មិនរកឃើញសំឡេងនិយាយក្នុងវីដេអូនេះទេ។")
+
+        last_error = None
+        for api_key_value in api_keys:
+            client = genai.Client(api_key=api_key_value)
+            for model_name in _candidate_gemini_models(model):
+                try:
+                    translated = translate_cues_text_only(client, model_name, cues)
+                    result = build_srt(cues, translated)
+                    if not result.strip() or "-->" not in result:
+                        raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
+                    return result
+                except Exception as exc:
+                    last_error = exc
+                    message = str(exc).upper()
+                    # Try the next model for quota/model availability problems.
+                    if (
+                        is_quota_error(exc)
+                        or is_invalid_key_error(exc)
+                        or "NOT_FOUND" in message
+                        or "MODEL" in message and "NOT" in message
+                        or "UNAVAILABLE" in message
+                        or "503" in message
+                    ):
+                        continue
+                    raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
+
+        raise RuntimeError(friendly_ai_error(last_error, len(api_keys)))
+
 def srt_to_structured_cues(srt_text):
     parsed = parse_srt(srt_text)
     return [
@@ -2419,7 +2566,7 @@ if "api_keys_manager" not in st.session_state:
 for state_key, default_value in {
     "target_language": "Khmer (ខ្មែរ)",
     "translation_style": "🔴 Chinese Drama Pro",
-    "model_selector": "gemini-2.5-flash",
+    "model_selector": "gemini-2.5-flash-lite",
     "lite_mode": True,
     "api_saved_notice": False,
 }.items():
@@ -2450,7 +2597,7 @@ with st.container(key="api_menu_container"):
         )
         st.selectbox(
             "🤖 Model",
-            ["gemini-2.5-flash", "gemini-2.5-pro"],
+            ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"],
             key="model_selector",
         )
         st.toggle("📶 4G Lite Mode", key="lite_mode")
