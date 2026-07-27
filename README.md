@@ -1,29 +1,32 @@
-# AI KHEMRA BRO v7.1 — Streamlit 4-File Build
+# AI KHEMRA BRO v7.2 — Streamlit Build & Clear Audio Fix
 
-ឯកសារដែលត្រូវដាក់ក្នុង GitHub មានតែ 4៖
+Use exactly these four files in the root of the GitHub repository:
 
-1. app.py
-2. requirements.txt
-3. packages.txt
-4. README.md
+- app.py
+- requirements.txt
+- packages.txt
+- README.md
 
-កុំដាក់ Dockerfile សម្រាប់ Streamlit Community Cloud។
+## Fixed
 
-## របៀបដំឡើង
+1. Fixed:
+   `run_ffmpeg() got an unexpected keyword argument 'capture_output'`
 
-- លុបកូដចាស់នៅក្នុងឯកសារទាំង 4
-- Upload ឯកសារថ្មីទាំង 4 ទៅ root folder នៃ GitHub repository
-- ឈ្មោះឯកសារត្រូវតែដូចខាងលើ ដោយគ្មានលេខក្នុងវង់ក្រចក
-- បន្ទាប់មកចូល Streamlit → Manage app → Reboot app
+2. The video flow can now continue:
+   Upload → FFmpeg audio extraction → Whisper → Khmer SRT → MP3.
 
-## FFmpeg
+3. Improved Khmer voice clarity:
+   - less low-frequency heaviness
+   - clearer consonants
+   - preserved high-frequency detail
+   - gentler compression
+   - 48 kHz stereo, 192 kbps MP3
+   - final loudness target: -16 LUFS, true peak -1.5 dB
 
-- packages.txt ដំឡើង ffmpeg នៅលើ Streamlit Cloud
-- requirements.txt មាន imageio-ffmpeg ជា fallback
-- app.py ស្វែងរក FFmpeg ដោយស្វ័យប្រវត្តិ
+## Deploy
 
-## Main file
+Replace the four old files in GitHub, then open Streamlit:
 
-Streamlit main file path ត្រូវកំណត់ជា:
+Manage app → Reboot app
 
-app.py
+Do not upload Dockerfile to Streamlit Community Cloud.
