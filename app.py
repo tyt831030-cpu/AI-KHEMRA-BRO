@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "6.0"
+APP_VERSION = "6.2"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -1276,14 +1276,24 @@ def transcribe_video_to_source_srt(video_path):
 # v5.4 reliable Khmer SRT pipeline
 # ---------------------------------------------------------------------------
 def _candidate_gemini_models(selected_model):
-    """Prefer the light text model and keep compatible fallbacks."""
+    """Return production-safe Gemini text models in fallback order.
+
+    The former 2.5-only list caused 404 errors for some new API projects.
+    Stable Gemini 3 models are preferred, followed by the rolling Flash alias
+    and finally 2.5 compatibility models for older projects.
+    """
     ordered = [
         str(selected_model or "").strip(),
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
         "gemini-2.5-flash-lite",
         "gemini-2.5-flash",
     ]
     result = []
     for name in ordered:
+        name = str(name or "").strip()
         if name and name not in result:
             result.append(name)
     return result
@@ -2613,7 +2623,7 @@ if "api_keys_manager" not in st.session_state:
 for state_key, default_value in {
     "target_language": "Khmer (ខ្មែរ)",
     "translation_style": "🔴 Chinese Drama Pro",
-    "model_selector": "gemini-2.5-flash-lite",
+    "model_selector": "gemini-3.5-flash-lite",
     "lite_mode": True,
     "api_saved_notice": False,
 }.items():
@@ -2643,9 +2653,15 @@ with st.container(key="api_menu_container"):
             key="translation_style",
         )
         st.selectbox(
-            "🤖 Model",
-            ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"],
+            "🤖 Gemini Model",
+            [
+                "gemini-3.5-flash-lite",
+                "gemini-3.6-flash",
+                "gemini-3.5-flash",
+                "gemini-flash-latest",
+            ],
             key="model_selector",
+            help="App នឹងសាកម៉ូឌែលបម្រុងដោយស្វ័យប្រវត្តិ ប្រសិនបើម៉ូឌែលមួយ 404 ឬមិនអាចប្រើបាន។",
         )
         st.toggle("📶 4G Lite Mode", key="lite_mode")
 
@@ -2707,7 +2723,7 @@ lite_mode = st.session_state.lite_mode
 max_mb = 60 if lite_mode else 150
 
 if not valid_api_keys:
-    st.warning("🔐 មិនទាន់មាន Gemini API Key — សូមបញ្ចូលក្នុង ☰ Settings ដើម្បីប្រើមុខងារ AI។")
+    st.warning("🔐 មិនទាន់មាន Gemini API Key — សូមបញ្ចូលក្នុង ☰ Settings ដើម្បីបកប្រែអក្សរទៅជាភាសាខ្មែរ។")
 
 st.markdown(
     '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
