@@ -1,13 +1,20 @@
-# AI KHEMRA BRO v5.4 — Khmer SRT Fixed
+# AI KHEMRA BRO v6.0
 
-Replace the old `app.py`, `requirements.txt`, and `packages.txt`, then redeploy.
+## Main update
+- Owner manually creates every Access Code.
+- No automatic Access Code generation.
+- One valid code can log in from iPhone, Android, tablet, or browser.
+- No device binding and no single-device lock.
+- Each browser session has a private temporary workspace for Video, SRT, WAV, and MP3.
+- Existing Upload → Whisper → Khmer SRT → MP3 workflow is preserved.
 
-## Main fix
-- Extracts 16 kHz audio with FFmpeg.
-- Creates word timestamps with Faster-Whisper.
-- Sends only subtitle text to Gemini, not the whole video.
-- Uses larger translation batches to reduce API requests and 429 errors.
-- Tries Gemini 2.5 Flash-Lite, then Gemini 2.5 Flash.
-- Preserves Whisper timestamps and returns editable Khmer SRT.
+## Deploy
+Upload these files to the existing project and replace the old files:
+- app.py
+- requirements.txt
+- packages.txt
 
-A 429 error still means the Google project has no available quota. The app can reduce requests and rotate saved keys/models, but cannot create quota.
+Then redeploy/restart the service.
+
+## Persistent storage note
+For production, mount a persistent volume for `licenses.db`; otherwise redeploying on an ephemeral host can erase customer codes.
