@@ -1,19 +1,26 @@
-# AI KHEMRA BRO — Version 7\.4\.1 Hotfix
+AI KHEMRA BRO v7.3 — Khmer-Only + Faster Processing
 
-This hotfix fixes the red\-screen crash caused by the missing Python `json` import\.
+Use exactly four files in the GitHub repository root:
 
-## Files
+• app.py
+• requirements.txt
+• packages.txt
+• README.md
 
-- `app.py` — corrected application
-- `requirements.txt` — Python dependencies
-- `packages.txt` — FFmpeg and GNU OpenMP runtime
+Fixed
 
-## Streamlit Cloud
+• Rejects Thai subtitles completely.
+• Rejects Chinese, Vietnamese, English, and Latin-letter dialogue.
+• Requires real Cambodian Khmer Unicode before SRT can be generated.
+• Automatically retries only the incorrect subtitle lines.
+• Prevents wrong-language text from being placed in the final SRT.
+• Reduces Whisper CPU processing time by using beam_size=5 and best_of=3.
+• Keeps FFmpeg and clear-audio fixes from v7.2.
 
-1. Replace the old files with these files\.
-2. Reboot the app\.
-3. If deployment still fails during Faster\-Whisper installation, delete and redeploy the app using Python 3\.11 in Advanced settings\.
+Install
 
-## Required secrets
+Replace the old four files in GitHub, then:
 
-Configure your Gemini API key and administrator secrets in Streamlit Secrets as needed\.
+Streamlit → Manage app → Reboot app
+
+After reboot, upload the video again and press Generate Khmer SRT.
