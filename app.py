@@ -1,9 +1,6 @@
 import asyncio
 import base64
 import datetime
-import asyncio
-import base64
-import datetime
 import hashlib
 import hmac
 import os
@@ -30,7 +27,7 @@ try:
 except Exception:
     imageio_ffmpeg = None
 
-APP_VERSION = "7.1"
+APP_VERSION = "7.2"
 
 
 
@@ -54,14 +51,29 @@ def resolve_ffmpeg_executable():
     )
 
 
-def run_ffmpeg(arguments, *, timeout=600):
-    """Run FFmpeg through the resolved binary and return CompletedProcess."""
+def run_ffmpeg(
+    arguments,
+    *,
+    timeout=600,
+    capture_output=True,
+    text=True,
+    check=False,
+    **subprocess_options,
+):
+    """Run FFmpeg through the resolved binary.
+
+    The wrapper intentionally accepts the common subprocess.run keyword
+    arguments used throughout the app. This prevents build/runtime failures
+    such as: unexpected keyword argument 'capture_output'.
+    """
     executable = resolve_ffmpeg_executable()
     return subprocess.run(
         [executable, *arguments],
-        capture_output=True,
-        text=True,
+        capture_output=capture_output,
+        text=text,
         timeout=timeout,
+        check=check,
+        **subprocess_options,
     )
 
 
@@ -1799,17 +1811,18 @@ def create_mp3(srt_text, progress_callback=None):
             # - keep Khmer consonants understandable
             # - use gentle compression only
             parts.extend([
-                'highpass=f=75:p=2',
-                'lowpass=f=7600:p=2',
-                'equalizer=f=180:t=q:w=1.0:g=1.2',
-                'equalizer=f=320:t=q:w=1.1:g=1.0',
-                'equalizer=f=1100:t=q:w=1.2:g=0.7',
-                'equalizer=f=2400:t=q:w=1.1:g=0.8',
-                'equalizer=f=4300:t=q:w=1.0:g=-1.8',
-                'equalizer=f=5800:t=q:w=0.9:g=-3.2',
-                'equalizer=f=7000:t=q:w=0.8:g=-3.8',
+                # Clear mobile/Facebook-style spoken voice:
+                # remove rumble and muddiness while preserving consonant detail.
+                'highpass=f=90:p=2',
+                'lowpass=f=15500:p=2',
+                'equalizer=f=180:t=q:w=1.0:g=-1.0',
+                'equalizer=f=320:t=q:w=1.1:g=-1.4',
+                'equalizer=f=900:t=q:w=1.2:g=0.3',
+                'equalizer=f=2600:t=q:w=1.0:g=1.5',
+                'equalizer=f=4200:t=q:w=1.0:g=1.2',
+                'equalizer=f=7200:t=q:w=1.0:g=-0.8',
                 *character_voice_filters(cue.get('tag', 'M_ADULT')),
-                'acompressor=threshold=-23dB:ratio=2.0:attack=14:release=190:makeup=1.15:knee=4',
+                'acompressor=threshold=-22dB:ratio=1.75:attack=12:release=160:makeup=1.08:knee=4',
                 f'atrim=0:{trim_seconds:.3f}',
                 'asetpts=PTS-STARTPTS',
                 f'afade=t=in:st=0:d={fade_in:.3f}',
@@ -1833,9 +1846,9 @@ def create_mp3(srt_text, progress_callback=None):
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'acompressor=threshold=-18dB:ratio=1.55:attack=18:release=240:makeup=1.0:knee=5,'
+              'acompressor=threshold=-19dB:ratio=1.40:attack=15:release=190:makeup=1.0:knee=5,'
               'alimiter=limit=0.94:attack=8:release=150,'
-              'loudnorm=I=-16:TP=-1.5:LRA=9,'
+              'loudnorm=I=-16:TP=-1.5:LRA=7,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
