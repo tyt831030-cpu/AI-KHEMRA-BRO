@@ -1,39 +1,25 @@
-AI KHEMRA BRO — Version 7.8
+# AI KHEMRA BRO — Version 7\.9
 
-Core workflow
+## Files
 
-Upload video → Whisper timestamps → Khmer translation → editable Khmer SRT → Edge TTS MP3.
+- `app.py` — Main Streamlit application
+- `requirements.txt` — Python dependencies
+- `packages.txt` — System dependency \(`ffmpeg`\)
+- `README.md` — Deployment notes
 
-Voice labels
+## Fixes in Version 7\.9
 
-Only these four labels are accepted:
+1. Added `import json` to the main import section\.
+2. Removed the duplicate local `import json` from `parse_json_array()`\.
+3. Confirmed `initialize_license_database()` runs after its function definition\.
+4. Confirmed the admin “សម្អាត Session ចាស់” button calls `st.rerun()` correctly\.
+5. Kept the four supported audio tags only:
+  - `[M]`
+  - `[F]`
+  - `[M_THINK]`
+  - `[F_THINK]`
 
-• [M] male dialogue
-• [F] female dialogue
-• [M_THINK] male inner thought
-• [F_THINK] female inner thought
-
-Old labels are normalized internally to one of the four labels. Edge TTS removes labels before synthesis.
-
-Version 7.8 fixes
-
-• Removed Gemini response_schema to prevent 400 INVALID_ARGUMENT schema errors.
-• On Gemini 429 quota errors, missing batches automatically use Google Translate fallback.
-• Chinese source text is never inserted into the Khmer editor after translation failure.
-• MP3 generation refuses SRT containing Chinese or Thai characters.
-• Raw Gemini exception payloads are replaced with short Khmer messages.
-• Uses only stable fallback model names configured in the application.
-
-Railway
-
-The repository root should contain:
-
-• app.py
-• requirements.txt
-• packages.txt
-• README.md
-
-Start command:
+## Railway start command
 
 ```bash
 streamlit run app.py --server.address 0.0.0.0 --server.port $PORT
