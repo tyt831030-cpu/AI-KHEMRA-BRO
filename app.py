@@ -1,3 +1,4 @@
+python
 import asyncio
 import base64
 import datetime
@@ -244,7 +245,7 @@ div[data-baseweb="popover"] [data-testid="stVerticalBlock"]{
   }
 }
 
-/* One locked split control: a single 100% bar divided 50% / 50%. */
+/* One stable professional menu button: white 3-line icon on black. */
 html, body, [data-testid="stAppViewContainer"], .stApp{
   overflow-x:hidden!important;
   width:100%!important;
@@ -983,8 +984,8 @@ def upload_for_context(client, video_path):
 
 def parse_json_array(raw_text):
     cleaned = (raw_text or "").strip()
-    cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned, flags=re.I)
-    cleaned = re.sub(r"\\s*```$", "", cleaned)
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
     left, right = cleaned.find("["), cleaned.rfind("]")
     if left == -1 or right == -1 or right <= left:
         raise ValueError("AI មិនបានត្រឡប់ JSON ត្រឹមត្រូវ។")
@@ -1258,71 +1259,8 @@ def friendly_ai_error(exc, key_count=1):
         )
     if is_invalid_key_error(exc):
         return "Gemini API Key មិនត្រឹមត្រូវ ឬមិនមានសិទ្ធិប្រើ។ សូមដាក់សោថ្មី ហើយចុច «រក្សាទុក»។"
-    message = re.sub(r"https?://\\S+", "", str(exc))
+    message = re.sub(r"https?://\S+", "", str(exc))
     return f"AI មិនអាចបញ្ចប់ការបកប្រែបាន៖ {message[:420]}"
-
-
-def video_to_srt(video_path, api_keys, model):
-    """
-    Whisper creates timestamps once.
-    Gemini keys rotate automatically when a key has quota/rate-limit problems.
-    The normal path uses one translation pass plus targeted repair only,
-    reducing Gemini requests compared with the previous three-pass workflow.
-    """
-    if isinstance(api_keys, str):
-        api_keys = [api_keys]
-    api_keys = [str(key).strip() for key in api_keys if str(key).strip()]
-    # Gemini is optional: Google Translate remains available as a fallback.
-
-    with tempfile.TemporaryDirectory() as folder:
-        folder_path = Path(folder)
-        proxy_path = folder_path / "video_proxy_480p.mp4"
-        audio_path = folder_path / "audio_16k.flac"
-
-        # Convert the large MP4 into a small processing copy. The original file
-        # is used only as a fallback when FFmpeg cannot create the proxy.
-        processing_video = Path(video_path)
-        try:
-            processing_video = optimize_video_for_processing(video_path, proxy_path)
-        except Exception:
-            processing_video = Path(video_path)
-
-        extract_audio(processing_video, audio_path)
-        cues = transcribe_with_whisper(audio_path)
-        if not cues:
-            raise RuntimeError("Whisper មិនរកឃើញសំឡេងនិយាយក្នុងវីដេអូនេះទេ។")
-
-        last_error = None
-
-        for api_key in api_keys:
-            try:
-                client = genai.Client(api_key=api_key)
-                uploaded_video = upload_for_context(client, processing_video)
-
-                # One main translation pass. translate_cues already repairs
-                # missing/Chinese cues, so the old extra full refinement pass
-                # is skipped to conserve free-tier requests.
-                translated = translate_cues(
-                    client, model, uploaded_video, cues
-                )
-                translated = repair_translation_items(
-                    client, model, uploaded_video, cues, translated
-                )
-
-                result = build_srt(cues, translated)
-                if "-->" not in result:
-                    raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
-                return result
-
-            except Exception as exc:
-                last_error = exc
-                if is_quota_error(exc) or is_invalid_key_error(exc):
-                    # Try the next API key saved by this user.
-                    continue
-                raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
-
-        raise RuntimeError(friendly_ai_error(last_error, len(api_keys)))
-
 
 
 # ---------------------------------------------------------------------------
@@ -1554,7 +1492,7 @@ def video_to_srt(video_path, api_keys, model, prepared_cues=None):
                 raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
 
     # Last-resort service: preserve all cue IDs/timestamps, but speaker tags default
-    # to M_ADULT because Google Translate cannot reliably infer speakers.
+    # to M because Google Translate cannot reliably infer speakers.
     try:
         translated = _google_translate_fallback(cues)
         return build_srt(cues, translated)
@@ -2831,7 +2769,7 @@ with st.container(key="api_menu_container"):
         st.markdown("#### 🔑 Gemini API Key")
         st.caption(
             "API Key ត្រូវបានអ៊ិនគ្រីប និងរក្សាទុកជាមួយគណនីអ្នក។ "
-            "អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ។"
+            "អាចដាក់ច្រើនសោ ដោយមួយបន្ទាត់មួយសោ港"
         )
         st.text_area(
             "Gemini API Key",
@@ -2863,7 +2801,7 @@ with st.container(key="api_menu_container"):
         if current_keys:
             st.success(f"✅ API Key ត្រៀមប្រើ៖ {len(current_keys)}")
         else:
-            st.caption("មិនទាន់មាន API Key។ អ្នកនៅតែអាចបើកមើលកម្មវិធីបាន។")
+            st.caption("មិនទាន់មាន API Key। អ្នកនៅតែអាចបើកមើលកម្មវិធីបាន។")
 
         st.divider()
         if st.button("ចាកចេញ", key="customer_logout", use_container_width=True):
@@ -2971,7 +2909,7 @@ with tab_video:
                             )
                     else:
                         generated_srt = ""
-                        notice = "⚠️ Source SRT បានរក្សាទុករួច។ សូមបញ្ចូល Gemini API Key ក្នុង ☰ Settings រួច Generate ម្តងទៀត។"
+                        notice = "⚠️ Source SRT បានរក្សាទុករួច। សូមបញ្ចូល Gemini API Key ក្នុង ☰ Settings រួច Generate ម្តងទៀត។"
 
                     st.session_state.srt_text = generated_srt
                     st.session_state.main_srt_editor = generated_srt
@@ -3193,19 +3131,31 @@ with tab_translate:
                 source_cues = srt_to_structured_cues(source_srt)
                 if not source_cues:
                     raise ValueError("Chinese SRT មិនត្រឹមត្រូវ។")
+                
+                # Convert source_cues to translation structure (needs 'start', 'end', 'source')
+                translation_cues = [
+                    {
+                        "id": cue["id"],
+                        "start": cue["start_ms"] / 1000.0,
+                        "end": cue["end_ms"] / 1000.0,
+                        "source": cue["text"]
+                    }
+                    for cue in source_cues
+                ]
+                
                 translated_map = None
                 gemini_error = None
                 if api_key:
                     try:
                         client = genai.Client(api_key=api_key)
-                        translated_map = translate_cues_text_only(client, model, source_cues)
+                        translated_map = translate_cues_text_only(client, model, translation_cues)
                     except Exception as exc:
                         gemini_error = exc
                 if translated_map is None:
-                    translated_map = _google_translate_fallback(source_cues)
+                    translated_map = _google_translate_fallback(translation_cues)
                     if gemini_error is not None:
                         st.info("Gemini មិនអាចប្រើបាន។ បានប្តូរទៅ Google Translate ដោយស្វ័យប្រវត្តិ។")
-                st.session_state.srt_text = build_srt(source_cues, translated_map)
+                st.session_state.srt_text = build_srt(translation_cues, translated_map)
                 st.session_state.pending_editor_update = st.session_state.srt_text
                 st.success("✅ បកប្រែរួចរាល់ និងរក្សា Timestamp ដើម។")
             except Exception as exc:
