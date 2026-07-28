@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "6.3-4VOICE-SMOOTH"
+APP_VERSION = "6.4-4VOICE-AIR-CLEAN"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -403,10 +403,12 @@ SREYMOM='km-KH-SreymomNeural'
 # naturally without aggressive FFmpeg stretching. Pitch stays near neutral to
 # avoid dry, thin or metallic speech.
 VOICE_PROFILES={
-    'M':{'voice':PISITH,'rate':'+2%','pitch':'-1Hz','volume':'+5%'},
-    'F':{'voice':SREYMOM,'rate':'+2%','pitch':'+0Hz','volume':'+5%'},
-    'M_THINK':{'voice':PISITH,'rate':'-1%','pitch':'-1Hz','volume':'+3%'},
-    'F_THINK':{'voice':SREYMOM,'rate':'-1%','pitch':'+0Hz','volume':'+3%'},
+    # Normal dialogue: soft, clear and close to the original Edge voices.
+    'M':{'voice':PISITH,'rate':'+0%','pitch':'-2Hz','volume':'+2%'},
+    'F':{'voice':SREYMOM,'rate':'+0%','pitch':'-1Hz','volume':'+2%'},
+    # Inner thought: clearly different, gentler and slightly slower.
+    'M_THINK':{'voice':PISITH,'rate':'-6%','pitch':'-5Hz','volume':'-5%'},
+    'F_THINK':{'voice':SREYMOM,'rate':'-6%','pitch':'-4Hz','volume':'-5%'},
 }
 VALID_SPEAKER_TAGS={'M','F','M_THINK','F_THINK'}
 
@@ -422,10 +424,10 @@ def normalize_speaker_tag(tag):
     return 'M'
 
 # Longer soft fades and a small protected gap remove clicks and abrupt cuts.
-VOICE_FADE_IN_SECONDS = 0.060
-VOICE_FADE_OUT_SECONDS = 0.110
-MIN_VOICE_GAP_MS = 20
-MAX_TEMPO_SPEED = 1.45
+VOICE_FADE_IN_SECONDS = 0.040
+VOICE_FADE_OUT_SECONDS = 0.075
+MIN_VOICE_GAP_MS = 28
+MAX_TEMPO_SPEED = 1.32
 
 TRANSLATE_PROMPT = """You are an expert Khmer movie subtitler, Chinese-drama translator, dubbing script writer, and character-continuity editor.
 The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
@@ -444,7 +446,7 @@ SPEAKER AND CHARACTER RULES:
 - Keep each recurring character on a consistent gender/age/role tag across nearby cues. Never switch a character's label merely because the emotion, volume, camera angle, or speaking style changes.
 - Before assigning a new tag, compare with the preceding and following cues. Change the tag only when the actual speaker changes or clear video/audio evidence proves a different age/gender/role.
 - Use M for every spoken male dialogue and F for every spoken female dialogue.
-- Use M_THINK or F_THINK only for unheard inner thoughts/internal monologue.
+- Use M_THINK or F_THINK only when the audio/video clearly proves an unheard internal monologue. If uncertain, use M or F.
 - Narration that is audibly spoken uses M or F according to the narrator's gender.
 - Never output any tag other than M, F, M_THINK, F_THINK.
 
@@ -530,7 +532,7 @@ Rules:
 - Do not alter timestamps, cue count, or cue order.
 - Keep recurring character identity and tag consistent across nearby cues.
 - Ordinary audible dialogue must use the correct age-and-gender label, even when calm, soft, sad, angry, or whispering.
-- Use M_THINK/F_THINK only for unheard internal monologue. All audible narration/dialogue must use M or F. Never use another tag.
+- Use M_THINK/F_THINK only when clearly proven as unheard internal monologue. If uncertain, keep M or F. All audible narration/dialogue must use M or F. Never use another tag.
 - Rewrite Khmer into fluent, natural everyday Cambodian dialogue suitable for professional movie dubbing; never use stiff word-for-word or book-like phrasing.
 - Read each Khmer line as spoken dialogue: if a Cambodian would not normally say it that way, rewrite it using shorter and more familiar wording.
 - Respect each cue's MAX_WORDS strictly so dubbing can play at a normal pace.
@@ -1546,12 +1548,32 @@ async def synthesize(text, profile, output_path):
     raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
 
 def character_voice_filters(tag):
-    """Gentle warmth only; avoid heavy EQ that makes Khmer voices dry."""
+    """Warm dialogue and clearly softer inner-thought sound without harsh air."""
     mapping = {
-        'M': ['equalizer=f=190:t=q:w=1.0:g=0.8', 'equalizer=f=3000:t=q:w=1.0:g=0.2'],
-        'F': ['equalizer=f=230:t=q:w=1.0:g=0.5', 'equalizer=f=3200:t=q:w=1.0:g=0.2'],
-        'M_THINK': ['equalizer=f=200:t=q:w=1.0:g=0.5', 'equalizer=f=4200:t=q:w=1.0:g=-0.5', 'volume=0.97'],
-        'F_THINK': ['equalizer=f=240:t=q:w=1.0:g=0.4', 'equalizer=f=4400:t=q:w=1.0:g=-0.5', 'volume=0.97'],
+        'M': [
+            'equalizer=f=180:t=q:w=1.0:g=0.7',
+            'equalizer=f=3000:t=q:w=1.1:g=-0.2',
+            'equalizer=f=6200:t=q:w=1.0:g=-1.6',
+        ],
+        'F': [
+            'equalizer=f=220:t=q:w=1.0:g=0.5',
+            'equalizer=f=3200:t=q:w=1.1:g=-0.3',
+            'equalizer=f=6500:t=q:w=1.0:g=-1.8',
+        ],
+        'M_THINK': [
+            'equalizer=f=190:t=q:w=1.0:g=0.5',
+            'equalizer=f=3400:t=q:w=1.0:g=-1.2',
+            'equalizer=f=6200:t=q:w=1.0:g=-2.6',
+            'aecho=0.8:0.25:38:0.07',
+            'volume=0.88',
+        ],
+        'F_THINK': [
+            'equalizer=f=230:t=q:w=1.0:g=0.4',
+            'equalizer=f=3600:t=q:w=1.0:g=-1.3',
+            'equalizer=f=6500:t=q:w=1.0:g=-2.8',
+            'aecho=0.8:0.25:38:0.07',
+            'volume=0.88',
+        ],
     }
     return mapping.get(normalize_speaker_tag(tag), mapping['M'])
 
@@ -1589,7 +1611,7 @@ def create_mp3(srt_text, progress_callback=None):
     """
     Create one synchronized Khmer MP3.
 
-    v3.0 rules:
+    v3.1 air-clean rules:
     - Every voice starts at the original SRT start timestamp.
     - A clip is fitted inside the time available before the next cue.
     - Generated voices never overlap or compete with one another.
@@ -1679,20 +1701,20 @@ def create_mp3(srt_text, progress_callback=None):
             # - use gentle compression only
             parts.extend([
                 'highpass=f=65:p=2',
-                'lowpass=f=9200:p=2',
+                'lowpass=f=7800:p=2',
                 'equalizer=f=180:t=q:w=1.0:g=0.8',
                 'equalizer=f=350:t=q:w=1.1:g=0.5',
                 'equalizer=f=1200:t=q:w=1.2:g=0.3',
                 'equalizer=f=2800:t=q:w=1.1:g=0.3',
-                'equalizer=f=5200:t=q:w=1.0:g=-1.0',
-                'equalizer=f=7600:t=q:w=0.9:g=-1.2',
+                'equalizer=f=5000:t=q:w=1.0:g=-1.8',
+                'equalizer=f=7200:t=q:w=0.9:g=-2.4',
                 *character_voice_filters(normalize_speaker_tag(cue.get('tag', 'M'))),
-                'acompressor=threshold=-24dB:ratio=1.6:attack=22:release=240:makeup=1.08:knee=5',
+                'acompressor=threshold=-23dB:ratio=1.35:attack=28:release=300:makeup=1.0:knee=6',
                 f'atrim=0:{trim_seconds:.3f}',
                 'asetpts=PTS-STARTPTS',
                 f'afade=t=in:st=0:d={fade_in:.3f}',
                 f'afade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f}',
-                'alimiter=limit=0.94:attack=7:release=100',
+                'alimiter=limit=0.91:attack=10:release=150',
                 f'adelay={start_ms}|{start_ms}[{label}]',
             ])
 
@@ -1711,9 +1733,9 @@ def create_mp3(srt_text, progress_callback=None):
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'acompressor=threshold=-19dB:ratio=1.35:attack=25:release=280:makeup=1.0:knee=6,'
-              'alimiter=limit=0.94:attack=8:release=150,'
-              'loudnorm=I=-17:TP=-1.5:LRA=9,'
+              'acompressor=threshold=-18dB:ratio=1.22:attack=35:release=340:makeup=1.0:knee=7,'
+              'alimiter=limit=0.91:attack=12:release=180,'
+              'loudnorm=I=-18.5:TP=-2.0:LRA=11,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
@@ -1722,7 +1744,7 @@ def create_mp3(srt_text, progress_callback=None):
             '-filter_complex', ';'.join(filters),
             '-map', '[out]',
             '-c:a', 'libmp3lame',
-            '-ac', '2',
+            '-ac', '1',
             '-ar', '48000',
             '-b:a', '192k',
             str(output),
