@@ -1,31 +1,40 @@
-AI KHEMRA BRO — Version 7.7
+AI KHEMRA BRO — Version 7.8
 
-Supported SRT voice tags
+Core workflow
 
-The application now outputs and uses only these four labels:
+Upload video → Whisper timestamps → Khmer translation → editable Khmer SRT → Edge TTS MP3.
 
-• [M] — male dialogue
-• [F] — female dialogue
-• [M_THINK] — male inner thought
-• [F_THINK] — female inner thought
+Voice labels
 
-Old labels are accepted only when opening an older SRT project. They are automatically converted to one of the four supported labels before dubbing.
+Only these four labels are accepted:
 
-Main fixes
+• [M] male dialogue
+• [F] female dialogue
+• [M_THINK] male inner thought
+• [F_THINK] female inner thought
 
-• Removed the unsupported Gemini JSON Schema field additionalProperties that caused 400 INVALID_ARGUMENT.
-• Restricted Gemini prompts and schema output to four tags only.
-• Added Khmer validation so Chinese or Latin dialogue cannot silently pass into the final Khmer SRT.
-• Google Translate fallback now produces [M] when Gemini is unavailable; it never copies the original Chinese line into the Khmer SRT.
-• Edge TTS now maps every accepted cue to one of the four voice profiles before generating audio.
-• Text-to-Speech and SRT-to-Speech menus now show only the four supported labels.
+Old labels are normalized internally to one of the four labels. Edge TTS removes labels before synthesis.
 
-Deployment files
+Version 7.8 fixes
 
-Use:
+• Removed Gemini response_schema to prevent 400 INVALID_ARGUMENT schema errors.
+• On Gemini 429 quota errors, missing batches automatically use Google Translate fallback.
+• Chinese source text is never inserted into the Khmer editor after translation failure.
+• MP3 generation refuses SRT containing Chinese or Thai characters.
+• Raw Gemini exception payloads are replaced with short Khmer messages.
+• Uses only stable fallback model names configured in the application.
+
+Railway
+
+The repository root should contain:
 
 • app.py
 • requirements.txt
 • packages.txt
+• README.md
 
-The existing dependency lists remain compatible.
+Start command:
+
+```bash
+streamlit run app.py --server.address 0.0.0.0 --server.port $PORT
+```
