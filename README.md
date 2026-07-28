@@ -1,26 +1,43 @@
-# AI KHEMRA BRO — Version 7\.9
+# AI KHEMRA BRO v7.3 — Khmer-Only + Faster Processing
 
-## Files
+Use exactly four files in the GitHub repository root:
 
-- `app.py` — Main Streamlit application
-- `requirements.txt` — Python dependencies
-- `packages.txt` — System dependency \(`ffmpeg`\)
-- `README.md` — Deployment notes
+- app.py
+- requirements.txt
+- packages.txt
+- README.md
 
-## Fixes in Version 7\.9
+## Fixed
 
-1. Added `import json` to the main import section\.
-2. Removed the duplicate local `import json` from `parse_json_array()`\.
-3. Confirmed `initialize_license_database()` runs after its function definition\.
-4. Confirmed the admin “សម្អាត Session ចាស់” button calls `st.rerun()` correctly\.
-5. Kept the four supported audio tags only:
-  - `[M]`
-  - `[F]`
-  - `[M_THINK]`
-  - `[F_THINK]`
+- Rejects Thai subtitles completely.
+- Rejects Chinese, Vietnamese, English, and Latin-letter dialogue.
+- Requires real Cambodian Khmer Unicode before SRT can be generated.
+- Automatically retries only the incorrect subtitle lines.
+- Prevents wrong-language text from being placed in the final SRT.
+- Reduces Whisper CPU processing time by using beam_size=5 and best_of=3.
+- Keeps FFmpeg and clear-audio fixes from v7.2.
 
-## Railway start command
+## Install
 
-```bash
-streamlit run app.py --server.address 0.0.0.0 --server.port $PORT
-```
+Replace the old four files in GitHub, then:
+
+Streamlit → Manage app → Reboot app
+
+After reboot, upload the video again and press Generate Khmer SRT.
+
+## Version 7.6 update
+- Gemini structured JSON subtitle output
+- 10-line translation chunks with 1:1 ID preservation
+- automatic API-key and Gemini model fallback
+- targeted retry for missing subtitle lines
+- optional deep-translator fallback when Gemini quota is exhausted
+- Khmer-only validation; Chinese source text is never copied into final Khmer SRT
+- speaker-tag voice profiles and updated MP3 cleanup filter
+
+
+## Version 8.1 changes
+- Gemini first, automatic Google Translate fallback.
+- Only four SRT voice tags: `[M]`, `[F]`, `[M_THINK]`, `[F_THINK]`.
+- Removed Gemini response-schema fields that caused HTTP 400 errors.
+- Blocks Chinese/Thai text before MP3 generation.
+- License database initialization and `st.rerun()` session cleanup retained.
