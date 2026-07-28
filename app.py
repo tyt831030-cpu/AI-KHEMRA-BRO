@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "6.5-VOICE-LOCK"
+APP_VERSION = "7.0-NATURAL-VOICE"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -406,14 +406,14 @@ SREYMOM='km-KH-SreymomNeural'
 # Normal dialogue stays neutral and stable. Inner-thought voices are deliberately
 # softer, slower and slightly lighter so they are clearly different.
 VOICE_PROFILES={
-    # Piseth: male dialogue
-    'M':{'voice':PISITH,'rate':'+1%','pitch':'-1Hz','volume':'+2%'},
-    # Sreymom: female dialogue
-    'F':{'voice':SREYMOM,'rate':'+1%','pitch':'+0Hz','volume':'+2%'},
-    # Piseth: male inner thought
-    'M_THINK':{'voice':PISITH,'rate':'-6%','pitch':'-4Hz','volume':'-9%'},
-    # Sreymom: female inner thought
-    'F_THINK':{'voice':SREYMOM,'rate':'-6%','pitch':'-3Hz','volume':'-9%'},
+    # Piseth — male spoken dialogue
+    'M':{'voice':PISITH,'rate':'+0%','pitch':'-1Hz','volume':'+3%'},
+    # Sreymom — female spoken dialogue
+    'F':{'voice':SREYMOM,'rate':'+0%','pitch':'+0Hz','volume':'+3%'},
+    # Piseth — quiet male inner thought
+    'M_THINK':{'voice':PISITH,'rate':'-4%','pitch':'-2Hz','volume':'-6%'},
+    # Sreymom — quiet female inner thought
+    'F_THINK':{'voice':SREYMOM,'rate':'-4%','pitch':'-1Hz','volume':'-6%'},
 }
 VALID_SPEAKER_TAGS={'M','F','M_THINK','F_THINK'}
 
@@ -1632,18 +1632,31 @@ def run_async(coro):
         loop.close(); asyncio.set_event_loop(None)
 
 def prepare_tts_text(text, final=True):
-    """Prepare Khmer speech without forcing every short cue to fall abruptly."""
+    """Prepare short Khmer dialogue for natural Edge-TTS phrasing."""
     clean = normalize_dialogue(text)
-    clean = re.sub(r"\s+([,!?។…])", r"\1", clean)
-    clean = re.sub(r"([,!?។…]){2,}", r"\1", clean)
     if not clean:
-        return clean
+        return ""
 
-    # Short subtitle fragments should flow into the following phrase instead of
-    # receiving a hard full-stop intonation.
-    if clean[-1] not in "!?។…":
-        word_count = len([part for part in clean.split() if part])
-        clean += "។" if final or word_count >= 9 else ","
+    # Remove tag remnants and normalize spacing around Khmer punctuation.
+    clean = re.sub(r'^\s*\[(?:M|F|M_THINK|F_THINK)\]\s*', '', clean, flags=re.I)
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    clean = re.sub(r'\s+([?!។…])', r'\1', clean)
+    clean = re.sub(r'([?!។…])\1+', r'\1', clean)
+
+    # Commas often create an unnatural mechanical pause in Khmer TTS.
+    clean = clean.replace(',', ' ')
+    clean = re.sub(r'\s+', ' ', clean).strip()
+
+    if not clean:
+        return ""
+
+    # A completed cue gets a Khmer full stop. A fragment inside a merged phrase
+    # remains open so Edge-TTS can continue with one natural breath.
+    if clean[-1] not in '?!។…':
+        if final:
+            clean += '។'
+        else:
+            clean += ' '
     return clean
 
 
@@ -1671,31 +1684,29 @@ async def synthesize(text, profile, output_path, final=True):
     raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
 
 def character_voice_filters(tag):
-    """Gentle tone matching without echo, pumping, or exaggerated breath noise."""
+    """Very gentle voice shaping that preserves the native Edge-TTS character."""
     mapping = {
         'M': [
-            'equalizer=f=180:t=q:w=1.0:g=0.3',
-            'equalizer=f=3200:t=q:w=1.0:g=0.25',
-            'volume=1.01',
+            'equalizer=f=190:t=q:w=1.0:g=0.35',
+            'equalizer=f=3600:t=q:w=1.0:g=0.20',
+            'volume=1.02',
         ],
         'F': [
-            'equalizer=f=220:t=q:w=1.0:g=0.2',
-            'equalizer=f=3400:t=q:w=1.0:g=0.25',
-            'volume=1.01',
+            'equalizer=f=230:t=q:w=1.0:g=0.20',
+            'equalizer=f=3900:t=q:w=1.0:g=0.18',
+            'volume=1.02',
         ],
         'M_THINK': [
-            'highpass=f=75:p=2',
-            'lowpass=f=6800:p=2',
-            'equalizer=f=250:t=q:w=1.0:g=0.6',
-            'equalizer=f=3300:t=q:w=1.0:g=-0.8',
-            'volume=0.92',
+            'lowpass=f=8200:p=1',
+            'equalizer=f=300:t=q:w=1.0:g=0.30',
+            'equalizer=f=3800:t=q:w=1.0:g=-0.35',
+            'volume=0.96',
         ],
         'F_THINK': [
-            'highpass=f=78:p=2',
-            'lowpass=f=7000:p=2',
-            'equalizer=f=280:t=q:w=1.0:g=0.5',
-            'equalizer=f=3500:t=q:w=1.0:g=-0.7',
-            'volume=0.92',
+            'lowpass=f=8400:p=1',
+            'equalizer=f=330:t=q:w=1.0:g=0.25',
+            'equalizer=f=4000:t=q:w=1.0:g=-0.30',
+            'volume=0.96',
         ],
     }
     return mapping.get(normalize_speaker_tag(tag), mapping['M'])
@@ -1784,7 +1795,7 @@ def create_mp3(srt_text, progress_callback=None):
             gap = current['start'] - previous['end']
             same_voice = previous['tag'] == tag
             # Join only close phrases; preserve real pauses and speaker changes.
-            if same_voice and -80 <= gap <= 420 and len(previous['texts']) < 4:
+            if same_voice and -100 <= gap <= 520 and len(previous['texts']) < 5:
                 previous['end'] = max(previous['end'], current['end'])
                 previous['texts'].append(current['texts'][0])
                 continue
@@ -1846,7 +1857,7 @@ def create_mp3(srt_text, progress_callback=None):
             if next_original_start is not None:
                 available_seconds = max(0.35, (next_original_start - start_ms - 35) / 1000.0)
                 required_speed = audio_seconds / available_seconds
-                safe_speed = min(max(1.0, required_speed), 1.18)
+                safe_speed = min(max(1.0, required_speed), 1.12)
             else:
                 safe_speed = 1.0
 
@@ -1860,14 +1871,12 @@ def create_mp3(srt_text, progress_callback=None):
 
             # No atrim and no fade-out: never remove a final Khmer syllable.
             parts.extend([
-                'highpass=f=60:p=2',
-                'lowpass=f=9500:p=2',
-                'equalizer=f=250:t=q:w=1.0:g=0.15',
-                'equalizer=f=3200:t=q:w=1.0:g=0.20',
-                'equalizer=f=6500:t=q:w=1.0:g=-0.9',
+                'highpass=f=65:p=1',
+                'lowpass=f=10500:p=1',
                 *character_voice_filters(group['tag']),
-                'acompressor=threshold=-19dB:ratio=1.12:attack=45:release=350:makeup=1.0:knee=7',
-                'alimiter=limit=0.95:attack=8:release=150',
+                'acompressor=threshold=-21dB:ratio=1.08:attack=55:release=420:makeup=1.0:knee=8',
+                'afade=t=in:st=0:d=0.018',
+                'alimiter=limit=0.97:attack=8:release=180',
                 f'adelay={start_ms}|{start_ms}[{label}]',
             ])
 
@@ -1879,9 +1888,9 @@ def create_mp3(srt_text, progress_callback=None):
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'acompressor=threshold=-17dB:ratio=1.10:attack=50:release=380:makeup=1.0:knee=8,'
-              'alimiter=limit=0.95:attack=10:release=160,'
-              'loudnorm=I=-17:TP=-1.5:LRA=9,'
+              'acompressor=threshold=-18dB:ratio=1.06:attack=65:release=450:makeup=1.0:knee=9,'
+              'loudnorm=I=-16.5:TP=-1.2:LRA=11,'
+              'alimiter=limit=0.97:attack=10:release=180,'
               f'apad=whole_dur={total_seconds:.3f},atrim=0:{total_seconds:.3f}[out]'
         )
 
