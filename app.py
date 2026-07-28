@@ -20,14 +20,20 @@ import extra_streamlit_components as stx
 import streamlit as st
 from cryptography.fernet import Fernet, InvalidToken
 from google import genai
+from google.genai import types
 from faster_whisper import WhisperModel
+
+try:
+    from deep_translator import GoogleTranslator
+except Exception:
+    GoogleTranslator = None
 
 try:
     import imageio_ffmpeg
 except Exception:
     imageio_ffmpeg = None
 
-APP_VERSION = "7.4"
+APP_VERSION = "7.6"
 
 
 
@@ -465,25 +471,23 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
 PISITH='km-KH-PisethNeural'
 SREYMOM='km-KH-SreymomNeural'
 VOICE_PROFILES={
-# Warm, natural profiles. Large pitch boosts make Khmer Neural voices thin/airy,
-# so age differences use mostly rate and only a very small pitch movement.
-'BOY':{'voice':PISITH,'rate':'+4%','pitch':'+2Hz','volume':'+5%'},
-'GIRL':{'voice':SREYMOM,'rate':'+4%','pitch':'+3Hz','volume':'+5%'},
-'M_YOUNG':{'voice':PISITH,'rate':'+1%','pitch':'+0Hz','volume':'+6%'},
-'F_YOUNG':{'voice':SREYMOM,'rate':'+1%','pitch':'+1Hz','volume':'+6%'},
-'M_ADULT':{'voice':PISITH,'rate':'-3%','pitch':'-3Hz','volume':'+7%'},
-'F_ADULT':{'voice':SREYMOM,'rate':'-2%','pitch':'-1Hz','volume':'+7%'},
-'M_OLD':{'voice':PISITH,'rate':'-11%','pitch':'-8Hz','volume':'+8%'},
-'F_OLD':{'voice':SREYMOM,'rate':'-10%','pitch':'-6Hz','volume':'+8%'},
-'M_THINK':{'voice':PISITH,'rate':'-7%','pitch':'-4Hz','volume':'+5%'},
-'F_THINK':{'voice':SREYMOM,'rate':'-7%','pitch':'-3Hz','volume':'+5%'},
-'NARRATOR_M':{'voice':PISITH,'rate':'-7%','pitch':'-6Hz','volume':'+8%'},
-'NARRATOR_F':{'voice':SREYMOM,'rate':'-6%','pitch':'-4Hz','volume':'+8%'},
-# Backward-compatible labels for older SRT files.
-'M':{'voice':PISITH,'rate':'-3%','pitch':'-2Hz','volume':'+7%'},
-'F':{'voice':SREYMOM,'rate':'-3%','pitch':'-1Hz','volume':'+7%'},
-'OLD_M':{'voice':PISITH,'rate':'-8%','pitch':'-5Hz','volume':'+8%'},
-'OLD_F':{'voice':SREYMOM,'rate':'-8%','pitch':'-3Hz','volume':'+8%'}
+    'BOY':        {'voice': PISITH,  'rate': '+2%', 'pitch': '+0Hz', 'volume': '+5%'},
+    'GIRL':       {'voice': SREYMOM, 'rate': '+2%', 'pitch': '+0Hz', 'volume': '+5%'},
+    'M_YOUNG':    {'voice': PISITH,  'rate': '+0%', 'pitch': '+0Hz', 'volume': '+5%'},
+    'F_YOUNG':    {'voice': SREYMOM, 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+5%'},
+    'M_ADULT':    {'voice': PISITH,  'rate': '-2%', 'pitch': '+0Hz', 'volume': '+6%'},
+    'F_ADULT':    {'voice': SREYMOM, 'rate': '-2%', 'pitch': '+0Hz', 'volume': '+6%'},
+    'M_OLD':      {'voice': PISITH,  'rate': '-8%', 'pitch': '-2Hz', 'volume': '+7%'},
+    'F_OLD':      {'voice': SREYMOM, 'rate': '-8%', 'pitch': '-2Hz', 'volume': '+7%'},
+    'NARRATOR_M': {'voice': PISITH,  'rate': '-5%', 'pitch': '+0Hz', 'volume': '+7%'},
+    'NARRATOR_F': {'voice': SREYMOM, 'rate': '-5%', 'pitch': '+0Hz', 'volume': '+7%'},
+    'M_THINK':    {'voice': PISITH,  'rate': '-5%', 'pitch': '+0Hz', 'volume': '+5%'},
+    'F_THINK':    {'voice': SREYMOM, 'rate': '-5%', 'pitch': '+0Hz', 'volume': '+5%'},
+    # Compatibility with older subtitle tags.
+    'M':          {'voice': PISITH,  'rate': '-2%', 'pitch': '+0Hz', 'volume': '+6%'},
+    'F':          {'voice': SREYMOM, 'rate': '-2%', 'pitch': '+0Hz', 'volume': '+6%'},
+    'OLD_M':      {'voice': PISITH,  'rate': '-8%', 'pitch': '-2Hz', 'volume': '+7%'},
+    'OLD_F':      {'voice': SREYMOM, 'rate': '-8%', 'pitch': '-2Hz', 'volume': '+7%'},
 }
 
 # Smooth-dubbing controls: gentle fades remove clicks/cuts when speaker labels change.
@@ -1006,8 +1010,8 @@ def upload_for_context(client, video_path):
 def parse_json_array(raw_text):
     import json
     cleaned = (raw_text or "").strip()
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\\s*```$", "", cleaned)
     left, right = cleaned.find("["), cleaned.rfind("]")
     if left == -1 or right == -1 or right <= left:
         raise ValueError("AI មិនបានត្រឡប់ JSON ត្រឹមត្រូវ។")
@@ -1384,17 +1388,14 @@ def transcribe_video_to_source_srt(video_path):
 # v5.4 reliable Khmer SRT pipeline
 # ---------------------------------------------------------------------------
 def _candidate_gemini_models(selected_model):
-    """Return production-safe Gemini text models in fallback order.
-
-    The former 2.5-only list caused 404 errors for some new API projects.
-    Stable Gemini 3 models are preferred, followed by the rolling Flash alias
-    and finally 2.5 compatibility models for older projects.
-    """
+    """Return current stable Gemini Flash models in fast-first fallback order."""
     ordered = [
         str(selected_model or "").strip(),
-        "gemini-2.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
         "gemini-2.5-flash-lite",
-        "gemini-flash-latest",
+        "gemini-2.5-flash",
     ]
     result = []
     for name in ordered:
@@ -1403,31 +1404,25 @@ def _candidate_gemini_models(selected_model):
             result.append(name)
     return result
 
-
 def _translate_batch_text_only(client, model_name, batch, previous_context=""):
-    """Translate Whisper text only. This avoids costly video upload requests."""
+    """Translate one small batch with Gemini structured JSON output."""
     cue_lines = "\n".join(
         f'ID={cue["id"]} | TIME={seconds_to_srt(cue["start"])} --> '
         f'{seconds_to_srt(cue["end"])} | SOURCE={cue["source"]}'
         for cue in batch
     )
     prompt = f"""
-You are the Khmer subtitle translation engine for AI KHEMRA BRO.
-Translate every SOURCE line into natural spoken Khmer for movie dubbing.
+You are a professional Khmer subtitle translator for Chinese dramas.
+Translate every SOURCE value into natural spoken Khmer.
 
 STRICT RULES:
-1. Return JSON array only. No markdown and no explanation.
-2. Return every input ID exactly once and in the same order.
-3. Never change, merge, split, or invent IDs.
-4. Do not omit short replies, names, numbers, negations, fillers, cries, or reactions.
-5. In each JSON object's "text" value, output Cambodian Khmer dialogue only.
-   JSON keys and the required speaker tag may use Latin letters, but the dialogue text may not.
-   Thai script, Chinese characters, Vietnamese, English, and pinyin are forbidden inside "text".
-   Before returning JSON, inspect every "text" value and rewrite it if it contains any non-Khmer language.
-6. Keep each line concise enough for its timestamp, but preserve the full meaning.
-7. Select one tag: M_ADULT, F_ADULT, M_OLD, F_OLD, BOY, GIRL,
-   M_THINK, F_THINK, NARRATOR_M, NARRATOR_F.
-8. JSON format: [{{"id":1,"tag":"M_ADULT","text":"..."}}]
+1. Return EXACTLY {len(batch)} objects, one object for every input ID.
+2. Keep strict 1:1 mapping; never merge, split, omit, reorder, or invent an ID.
+3. Keep each ID unchanged. Translate only the SOURCE meaning.
+4. Preserve names, numbers, negations, fillers, cries, emotional reactions, and context.
+5. The text field must contain natural Cambodian Khmer only. No Chinese, Thai, Vietnamese, English, pinyin, or Latin dialogue.
+6. Choose exactly one speaker tag from: BOY, GIRL, M_YOUNG, F_YOUNG, M_ADULT, F_ADULT, M_OLD, F_OLD, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F.
+7. Return JSON only, following the required schema.
 
 RECENT CONTEXT:
 {previous_context or '(none)'}
@@ -1435,31 +1430,86 @@ RECENT CONTEXT:
 CUES:
 {cue_lines}
 """.strip()
-    response = gemini_generate_with_retry(client, model_name, [prompt], attempts=3)
+
+    schema = {
+        "type": "array",
+        "minItems": len(batch),
+        "maxItems": len(batch),
+        "items": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "tag": {
+                    "type": "string",
+                    "enum": [
+                        "BOY", "GIRL", "M_YOUNG", "F_YOUNG", "M_ADULT",
+                        "F_ADULT", "M_OLD", "F_OLD", "M_THINK", "F_THINK",
+                        "NARRATOR_M", "NARRATOR_F"
+                    ],
+                },
+                "text": {"type": "string"},
+            },
+            "required": ["id", "tag", "text"],
+            "additionalProperties": False,
+        },
+    }
+
+    response = client.models.generate_content(
+        model=model_name,
+        contents=[prompt],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=schema,
+            temperature=0.2,
+        ),
+    )
     rows = parse_json_array(response.text or "")
-    allowed_ids = {cue["id"] for cue in batch}
+    allowed_ids = [cue["id"] for cue in batch]
     parsed = {}
     for row in rows:
         try:
             cue_id = int(row.get("id"))
         except (TypeError, ValueError, AttributeError):
             continue
-        if cue_id not in allowed_ids:
+        if cue_id not in allowed_ids or cue_id in parsed:
             continue
-        tag = str(row.get("tag", "M_ADULT")).upper().strip()
-        if tag not in VOICE_PROFILES:
-            tag = "M_ADULT"
+        tag = normalize_speaker_tag(row.get("tag", "M_ADULT"))
         dialogue = normalize_dialogue(row.get("text", ""))
         if is_valid_khmer_dialogue(dialogue):
             parsed[cue_id] = {"tag": tag, "text": dialogue}
     return parsed
 
 
+def _google_translate_fallback(cues, target_lang="km"):
+    """Last-resort line-by-line fallback. Never copies Chinese source into Khmer SRT."""
+    if GoogleTranslator is None:
+        raise RuntimeError("deep-translator មិនទាន់បានដំឡើង។")
+    translator = GoogleTranslator(source="auto", target=target_lang)
+    result = {}
+    for cue in cues:
+        source = str(cue.get("source", "")).strip()
+        if not source:
+            result[cue["id"]] = {"tag": "M_ADULT", "text": "…"}
+            continue
+        translated = normalize_dialogue(translator.translate(source) or "")
+        if not is_valid_khmer_dialogue(translated):
+            raise RuntimeError(f"ប្រព័ន្ធបម្រុងមិនអាចបកប្រែបន្ទាត់ {cue['id']} ជាខ្មែរបាន។")
+        result[cue["id"]] = {"tag": "M_ADULT", "text": translated}
+        time.sleep(0.15)
+    return result
+
+
+def _merge_missing_translations(base, extra):
+    for cue_id, item in extra.items():
+        if cue_id not in base or not is_valid_khmer_dialogue(base[cue_id].get("text", "")):
+            base[cue_id] = item
+    return base
+
+
 def translate_cues_text_only(client, model_name, cues):
-    """Low-request translation path designed for free-tier Gemini keys."""
+    """Translate in 10-line chunks with validation, targeted retries, and pacing."""
     translated = {}
-    # Larger batches reduce request count and 429 failures.
-    batch_size = 45
+    batch_size = 10
     for offset in range(0, len(cues), batch_size):
         batch = cues[offset:offset + batch_size]
         context_rows = []
@@ -1469,72 +1519,51 @@ def translate_cues_text_only(client, model_name, cues):
                 context_rows.append(
                     f'ID={cue["id"]} TAG={item["tag"]} SOURCE={cue["source"]} KHMER={item["text"]}'
                 )
-        parsed = _translate_batch_text_only(
-            client, model_name, batch, "\n".join(context_rows)
-        )
-        translated.update(parsed)
 
+        last_error = None
+        parsed = {}
+        for attempt in range(3):
+            try:
+                parsed = _translate_batch_text_only(
+                    client, model_name, batch, "\n".join(context_rows)
+                )
+                missing = [cue for cue in batch if cue["id"] not in parsed]
+                if not missing:
+                    break
+                # Retry only missing lines; never fill them with original Chinese text.
+                repaired = _translate_batch_text_only(
+                    client,
+                    model_name,
+                    missing,
+                    "Previous output missed lines. Return every requested ID in Khmer only.",
+                )
+                _merge_missing_translations(parsed, repaired)
+                if all(cue["id"] in parsed for cue in batch):
+                    break
+            except Exception as exc:
+                last_error = exc
+                if not is_quota_error(exc) and attempt == 2:
+                    raise
+                time.sleep(min(12.0, 2.0 * (2 ** attempt)))
+
+        translated.update(parsed)
         missing = [cue for cue in batch if cue["id"] not in translated]
         if missing:
-            # One compact repair request, only for invalid/missing lines.
-            repaired = _translate_batch_text_only(client, model_name, missing)
-            translated.update(repaired)
-
-        # Strict final language guard: Thai or any non-Khmer output is removed
-        # and retried once in a smaller group for better compliance.
-        invalid = [
-            cue for cue in batch
-            if cue["id"] not in translated
-            or not is_valid_khmer_dialogue(translated[cue["id"]].get("text", ""))
-        ]
-        if invalid:
-            for cue in invalid:
-                translated.pop(cue["id"], None)
-            for repair_offset in range(0, len(invalid), 10):
-                repaired = _translate_batch_text_only(
-                    client, model_name, invalid[repair_offset:repair_offset + 10],
-                    "IMPORTANT: Previous output used the wrong language. Return Cambodian Khmer script only."
-                )
-                translated.update(repaired)
-
-        still_missing = [cue["id"] for cue in batch if cue["id"] not in translated]
-        if still_missing:
+            if last_error:
+                raise last_error
             raise RuntimeError(
                 "AI មិនបានត្រឡប់បន្ទាត់ SRT គ្រប់គ្រាន់៖ "
-                + ", ".join(map(str, still_missing[:20]))
+                + ", ".join(str(cue["id"]) for cue in missing)
             )
+
+        # Gentle pacing protects per-minute request limits without making the app too slow.
+        if offset + batch_size < len(cues):
+            time.sleep(1.0)
     return translated
 
 
-def validate_khmer_srt_output(srt_text, expected_count=None):
-    """Reject source-language leakage before Khmer SRT reaches the editor/download."""
-    text = clean_srt(srt_text)
-    if not text or "-->" not in text:
-        raise RuntimeError("Khmer SRT ទទេ ឬទម្រង់មិនត្រឹមត្រូវ។")
-    blocks = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
-    if expected_count is not None and len(blocks) != int(expected_count):
-        raise RuntimeError(
-            f"Khmer SRT មិនគ្រប់បន្ទាត់៖ បាន {len(blocks)} / ត្រូវការ {expected_count}។"
-        )
-    for position, block in enumerate(blocks, start=1):
-        lines = [line.strip() for line in block.splitlines() if line.strip()]
-        if len(lines) < 3 or "-->" not in lines[1]:
-            raise RuntimeError(f"ទម្រង់ SRT ខូចនៅបន្ទាត់ {position}។")
-        dialogue = " ".join(lines[2:])
-        dialogue = re.sub(r"^\[[A-Z_]+\]\s*", "", dialogue).strip()
-        if not is_valid_khmer_dialogue(dialogue):
-            raise RuntimeError(
-                f"បន្ទាត់ {position} នៅមានអក្សរចិន/ថៃ/អង់គ្លេស ឬមិនមែនជាខ្មែរត្រឹមត្រូវ។"
-            )
-    return text
-
-
 def video_to_srt(video_path, api_keys, model, prepared_cues=None):
-    """
-    Reliable v5.5 path:
-    FFmpeg -> Whisper timestamps -> text-only Gemini translation -> Khmer SRT.
-    When prepared_cues are supplied, Whisper is not run a second time.
-    """
+    """FFmpeg -> Whisper -> Gemini key/model rotation -> optional Google fallback."""
     if isinstance(api_keys, str):
         api_keys = [api_keys]
     api_keys = [str(key).strip() for key in api_keys if str(key).strip()]
@@ -1552,29 +1581,46 @@ def video_to_srt(video_path, api_keys, model, prepared_cues=None):
         raise RuntimeError("Whisper មិនរកឃើញសំឡេងនិយាយក្នុងវីដេអូនេះទេ។")
 
     last_error = None
-    for api_key_value in api_keys:
+    for key_index, api_key_value in enumerate(api_keys, start=1):
         client = genai.Client(api_key=api_key_value)
         for model_name in _candidate_gemini_models(model):
             try:
                 translated = translate_cues_text_only(client, model_name, cues)
                 result = build_srt(cues, translated)
-                return validate_khmer_srt_output(result, expected_count=len(cues))
+                if not result.strip() or "-->" not in result:
+                    raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
+                return result
             except Exception as exc:
                 last_error = exc
                 message = str(exc).upper()
-                # Try the next model for quota/model availability problems.
-                if (
+                switchable = (
                     is_quota_error(exc)
                     or is_invalid_key_error(exc)
                     or "NOT_FOUND" in message
-                    or "MODEL" in message and "NOT" in message
+                    or ("MODEL" in message and "NOT" in message)
                     or "UNAVAILABLE" in message
                     or "503" in message
-                ):
+                    or "TIMEOUT" in message
+                )
+                if switchable:
+                    time.sleep(1.0)
                     continue
                 raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
 
-    raise RuntimeError(friendly_ai_error(last_error, len(api_keys)))
+    # Last-resort service: preserve all cue IDs/timestamps, but speaker tags default
+    # to M_ADULT because Google Translate cannot reliably infer speakers.
+    try:
+        translated = _google_translate_fallback(cues)
+        return build_srt(cues, translated)
+    except Exception as fallback_exc:
+        if last_error is not None:
+            raise RuntimeError(
+                friendly_ai_error(last_error, len(api_keys))
+                + f" ប្រព័ន្ធបកប្រែបម្រុងក៏បរាជ័យ៖ {fallback_exc}"
+            ) from fallback_exc
+        raise
+
+
 def srt_to_structured_cues(srt_text):
     parsed = parse_srt(srt_text)
     return [
@@ -1877,23 +1923,18 @@ def create_mp3(srt_text, progress_callback=None):
             # - keep Khmer consonants understandable
             # - use gentle compression only
             parts.extend([
-                # Clear mobile/Facebook-style spoken voice:
-                # remove rumble and muddiness while preserving consonant detail.
-                'highpass=f=90:p=2',
-                'lowpass=f=15500:p=2',
-                'equalizer=f=180:t=q:w=1.0:g=-1.0',
-                'equalizer=f=320:t=q:w=1.1:g=-1.4',
-                'equalizer=f=900:t=q:w=1.2:g=0.3',
-                'equalizer=f=2600:t=q:w=1.0:g=1.5',
-                'equalizer=f=4200:t=q:w=1.0:g=1.2',
-                'equalizer=f=7200:t=q:w=1.0:g=-0.8',
+                'highpass=f=100:p=2',
+                'lowpass=f=14000:p=2',
+                'equalizer=f=300:t=q:w=1.0:g=-1.5',
+                'equalizer=f=3500:t=q:w=1.0:g=-2.0',
+                'equalizer=f=6000:t=q:w=1.0:g=-1.5',
                 *character_voice_filters(cue.get('tag', 'M_ADULT')),
-                'acompressor=threshold=-22dB:ratio=1.75:attack=12:release=160:makeup=1.08:knee=4',
+                'acompressor=threshold=-20dB:ratio=1.4:attack=15:release=200:makeup=1.0',
                 f'atrim=0:{trim_seconds:.3f}',
                 'asetpts=PTS-STARTPTS',
                 f'afade=t=in:st=0:d={fade_in:.3f}',
                 f'afade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f}',
-                'alimiter=limit=0.94:attack=7:release=100',
+                'alimiter=limit=0.95:attack=7:release=100',
                 f'adelay={start_ms}|{start_ms}[{label}]',
             ])
 
@@ -2810,7 +2851,7 @@ if "api_keys_manager" not in st.session_state:
 for state_key, default_value in {
     "target_language": "Khmer (ខ្មែរ)",
     "translation_style": "🔴 Chinese Drama Pro",
-    "model_selector": "gemini-2.5-flash",
+    "model_selector": "gemini-3.5-flash-lite",
     "lite_mode": True,
     "api_saved_notice": False,
 }.items():
@@ -2842,8 +2883,9 @@ with st.container(key="api_menu_container"):
         st.selectbox(
             "🤖 Gemini Model",
             [
-                "gemini-2.5-flash",
-                "gemini-2.5-flash-lite",
+                "gemini-3.5-flash-lite",
+                "gemini-3.6-flash",
+                "gemini-3.5-flash",
                 "gemini-flash-latest",
             ],
             key="model_selector",
@@ -2987,16 +3029,15 @@ with tab_video:
                                 generated_srt = future.result()
                             notice = "✅ Khmer SRT បានបង្កើតរួចរាល់។"
                         except Exception as translation_exc:
-                            # Preserve the Chinese transcription separately, but NEVER put it
-                            # inside the Khmer editor or allow it to download as Khmer SRT.
-                            generated_srt = ""
+                            # Never discard Whisper output when Gemini quota/key fails.
+                            generated_srt = source_srt
                             notice = (
-                                "⚠️ បានចម្លងសំឡេងពីវីដេអូជាអក្សរដើមរួច ប៉ុន្តែការបកប្រែទៅខ្មែរមិនទាន់ជោគជ័យ។ "
+                                "⚠️ Whisper បានបង្កើត Source SRT រួច ប៉ុន្តែ Gemini មិនអាចបកប្រែបាន។ "
                                 + friendly_ai_error(translation_exc, len(valid_api_keys))
                             )
                     else:
-                        generated_srt = ""
-                        notice = "⚠️ បានចម្លងសំឡេងពីវីដេអូរួច។ សូមដាក់ Gemini API Key ដើម្បីបង្កើត Khmer SRT។"
+                        generated_srt = source_srt
+                        notice = "⚠️ បានបង្កើត Source SRT រួច។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។"
 
                     st.session_state.srt_text = generated_srt
                     st.session_state.main_srt_editor = generated_srt
