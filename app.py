@@ -406,14 +406,13 @@ SREYMOM='km-KH-SreymomNeural'
 # Normal dialogue stays neutral and stable. Inner-thought voices are deliberately
 # softer, slower and slightly lighter so they are clearly different.
 VOICE_PROFILES={
-    # Clear, modern dialogue. A slight positive rate reduces forced cutting.
-    'M':{'voice':PISITH,'rate':'+3%','pitch':'-1Hz','volume':'+4%'},
-    'F':{'voice':SREYMOM,'rate':'+3%','pitch':'+0Hz','volume':'+4%'},
+    # Natural dialogue — stable volume and nearly neutral pitch.
+    'M':{'voice':PISITH,'rate':'+1%','pitch':'-1Hz','volume':'+2%'},
+    'F':{'voice':SREYMOM,'rate':'+1%','pitch':'+0Hz','volume':'+2%'},
 
-    # Inner thought stays clearly different but remains natural and intelligible.
-    # The larger difference comes from tone/space filters, not an artificial pitch.
-    'M_THINK':{'voice':PISITH,'rate':'-5%','pitch':'-2Hz','volume':'-7%'},
-    'F_THINK':{'voice':SREYMOM,'rate':'-5%','pitch':'-1Hz','volume':'-7%'},
+    # Inner thought — clearly softer/darker, but no artificial high pitch or heavy echo.
+    'M_THINK':{'voice':PISITH,'rate':'-4%','pitch':'-3Hz','volume':'-5%'},
+    'F_THINK':{'voice':SREYMOM,'rate':'-4%','pitch':'-2Hz','volume':'-5%'},
 }
 VALID_SPEAKER_TAGS={'M','F','M_THINK','F_THINK'}
 
@@ -429,10 +428,10 @@ def normalize_speaker_tag(tag):
     return 'M'
 
 # Longer soft fades and a small protected gap remove clicks and abrupt cuts.
-VOICE_FADE_IN_SECONDS = 0.018
-VOICE_FADE_OUT_SECONDS = 0.035
-MIN_VOICE_GAP_MS = 8
-MAX_TEMPO_SPEED = 1.50
+VOICE_FADE_IN_SECONDS = 0.010
+VOICE_FADE_OUT_SECONDS = 0.018
+MIN_VOICE_GAP_MS = 4
+MAX_TEMPO_SPEED = 1.65
 
 TRANSLATE_PROMPT = """You are an expert Khmer movie subtitler, Chinese-drama translator, dubbing script writer, and character-continuity editor.
 The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
@@ -1521,19 +1520,24 @@ def run_async(coro):
     finally:
         loop.close(); asyncio.set_event_loop(None)
 
-def prepare_tts_text(text):
-    """Prepare conversational Khmer for smoother Edge-TTS rhythm and intonation."""
+def prepare_tts_text(text, final=True):
+    """Prepare Khmer speech without forcing every short cue to fall abruptly."""
     clean = normalize_dialogue(text)
-    clean = re.sub(r"\s+([,!?។])", r"\1", clean)
-    clean = re.sub(r"([,!?។]){2,}", r"\1", clean)
-    # A final Khmer full stop gives declarative lines a gentle natural fall.
-    if clean and clean[-1] not in "!?។…":
-        clean += "។"
+    clean = re.sub(r"\s+([,!?។…])", r"\1", clean)
+    clean = re.sub(r"([,!?។…]){2,}", r"\1", clean)
+    if not clean:
+        return clean
+
+    # Short subtitle fragments should flow into the following phrase instead of
+    # receiving a hard full-stop intonation.
+    if clean[-1] not in "!?។…":
+        word_count = len([part for part in clean.split() if part])
+        clean += "។" if final or word_count >= 9 else ","
     return clean
 
 
-async def synthesize(text, profile, output_path):
-    clean_text = prepare_tts_text(text)
+async def synthesize(text, profile, output_path, final=True):
+    clean_text = prepare_tts_text(text, final=final)
     if not clean_text:
         raise ValueError('មានបន្ទាត់ SRT ទទេ។')
     last_error = None
@@ -1556,74 +1560,48 @@ async def synthesize(text, profile, output_path):
     raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
 
 def character_voice_filters(tag):
-    """Consistent dialogue level and a natural cinematic inner-thought tone."""
+    """Gentle tone matching without echo, pumping, or exaggerated breath noise."""
     mapping = {
         'M': [
-            'equalizer=f=190:t=q:w=1.0:g=0.5',
-            'equalizer=f=3000:t=q:w=1.0:g=0.7',
-            'volume=1.03',
+            'equalizer=f=180:t=q:w=1.0:g=0.3',
+            'equalizer=f=3200:t=q:w=1.0:g=0.25',
+            'volume=1.01',
         ],
         'F': [
-            'equalizer=f=240:t=q:w=1.0:g=0.4',
-            'equalizer=f=3300:t=q:w=1.0:g=0.7',
-            'volume=1.03',
+            'equalizer=f=220:t=q:w=1.0:g=0.2',
+            'equalizer=f=3400:t=q:w=1.0:g=0.25',
+            'volume=1.01',
         ],
         'M_THINK': [
-            'highpass=f=80:p=2',
-            'lowpass=f=7200:p=2',
-            'equalizer=f=220:t=q:w=1.0:g=0.8',
-            'equalizer=f=2600:t=q:w=1.0:g=-0.4',
-            'aecho=0.82:0.20:42:0.075',
-            'volume=0.90',
+            'highpass=f=75:p=2',
+            'lowpass=f=6800:p=2',
+            'equalizer=f=250:t=q:w=1.0:g=0.6',
+            'equalizer=f=3300:t=q:w=1.0:g=-0.8',
+            'volume=0.92',
         ],
         'F_THINK': [
-            'highpass=f=85:p=2',
-            'lowpass=f=7400:p=2',
-            'equalizer=f=260:t=q:w=1.0:g=0.6',
-            'equalizer=f=2900:t=q:w=1.0:g=-0.3',
-            'aecho=0.82:0.20:42:0.075',
-            'volume=0.90',
+            'highpass=f=78:p=2',
+            'lowpass=f=7000:p=2',
+            'equalizer=f=280:t=q:w=1.0:g=0.5',
+            'equalizer=f=3500:t=q:w=1.0:g=-0.7',
+            'volume=0.92',
         ],
     }
     return mapping.get(normalize_speaker_tag(tag), mapping['M'])
 
 
 def lock_voice_tags(cues):
-    """Conservatively stabilize obvious one-cue gender mistakes.
+    """Preserve the four labels selected for each cue.
 
-    A single M/F tag between two matching neighboring tags is treated as a
-    detector glitch. THINK remains a mode of the same gender and never changes
-    the character's gender. This avoids rapid M/F switching while preserving
-    genuine speaker changes.
+    The old neighbor-based correction could change a real male/female speaker
+    into the wrong voice. We now only normalize label spelling and never guess
+    gender from adjacent subtitles.
     """
-    if not cues:
-        return cues
-    locked = [dict(cue) for cue in cues]
-
-    def gender(tag):
-        return 'F' if normalize_speaker_tag(tag).startswith('F') else 'M'
-
-    def thought(tag):
-        return normalize_speaker_tag(tag).endswith('_THINK')
-
-    # Remove isolated gender flips only when both neighbors agree.
-    for i in range(1, len(locked) - 1):
-        left, cur, right = locked[i - 1], locked[i], locked[i + 1]
-        lg, cg, rg = gender(left.get('tag')), gender(cur.get('tag')), gender(right.get('tag'))
-        if lg == rg and cg != lg:
-            cur['tag'] = f'{lg}_THINK' if thought(cur.get('tag')) else lg
-
-    # A THINK tag must keep the gender of adjacent dialogue when both sides agree.
-    for i, cue in enumerate(locked):
-        if not thought(cue.get('tag')):
-            continue
-        neighbor_genders = []
-        if i > 0:
-            neighbor_genders.append(gender(locked[i - 1].get('tag')))
-        if i + 1 < len(locked):
-            neighbor_genders.append(gender(locked[i + 1].get('tag')))
-        if len(neighbor_genders) == 2 and neighbor_genders[0] == neighbor_genders[1]:
-            cue['tag'] = f'{neighbor_genders[0]}_THINK'
+    locked = []
+    for cue in cues or []:
+        item = dict(cue)
+        item['tag'] = normalize_speaker_tag(item.get('tag', 'M'))
+        locked.append(item)
     return locked
 
 
@@ -1658,14 +1636,15 @@ def atempo_chain(speed):
 
 def create_mp3(srt_text, progress_callback=None):
     """
-    Create one synchronized Khmer MP3.
+    Create natural Khmer speech without chopping syllables.
 
-    v3.0 rules:
-    - Every voice starts at the original SRT start timestamp.
-    - A clip is fitted inside the time available before the next cue.
-    - Generated voices never overlap or compete with one another.
-    - Breathy high frequencies are reduced without making speech muddy.
-    - Loudness is mastered once at the end instead of aggressively per clip.
+    Key behavior:
+    - Adjacent cues from the same voice are grouped into one utterance so Edge-TTS
+      keeps one natural tone instead of restarting on every subtitle line.
+    - No hard atrim and no fade-out are applied to spoken words.
+    - If an utterance is longer than its subtitle slot, the following utterance is
+      delayed slightly rather than cutting the current word.
+    - Only gentle final mastering is applied.
     """
     cues = lock_voice_tags(parse_srt(srt_text))
     if not cues:
@@ -1678,27 +1657,57 @@ def create_mp3(srt_text, progress_callback=None):
             'សូម Generate SRT ឡើងវិញ។'
         )
 
+    # Merge nearby subtitle fragments spoken by the same voice. This is the
+    # main fix for the robotic "stop-start-stop-start" sound.
+    groups = []
+    for cue in cues:
+        tag = normalize_speaker_tag(cue.get('tag', 'M'))
+        current = {
+            'start': int(cue['start']),
+            'end': int(cue['end']),
+            'tag': tag,
+            'texts': [str(cue['text']).strip()],
+        }
+        if groups:
+            previous = groups[-1]
+            gap = current['start'] - previous['end']
+            same_voice = previous['tag'] == tag
+            # Join only close phrases; preserve real pauses and speaker changes.
+            if same_voice and -80 <= gap <= 420 and len(previous['texts']) < 4:
+                previous['end'] = max(previous['end'], current['end'])
+                previous['texts'].append(current['texts'][0])
+                continue
+        groups.append(current)
+
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
         clips = []
-        clip_durations = []
-        total_cues = len(cues)
+        durations = []
+        total_groups = len(groups)
 
         if progress_callback:
-            progress_callback(2, "កំពុងរៀបចំសំឡេងតួអង្គ…")
+            progress_callback(2, "កំពុងរៀបចំឃ្លាសំឡេងធម្មជាតិ…")
 
-        for index, cue in enumerate(cues):
-            clip = root / f'clip_{index:04d}.mp3'
-            profile = VOICE_PROFILES.get(normalize_speaker_tag(cue['tag']), VOICE_PROFILES['M'])
-            run_async(synthesize(cue['text'], profile, clip))
+        for index, group in enumerate(groups):
+            clip = root / f'phrase_{index:04d}.mp3'
+            profile = VOICE_PROFILES.get(group['tag'], VOICE_PROFILES['M'])
+
+            parts = []
+            for part_index, phrase in enumerate(group['texts']):
+                is_last = part_index == len(group['texts']) - 1
+                prepared = prepare_tts_text(phrase, final=is_last)
+                parts.append(prepared)
+            spoken_text = " ".join(parts)
+
+            run_async(synthesize(spoken_text, profile, clip, final=True))
             clips.append(clip)
-            clip_durations.append(probe_audio_duration(clip))
+            durations.append(probe_audio_duration(clip))
 
             if progress_callback:
-                percent = 5 + int(((index + 1) / total_cues) * 82)
+                percent = 5 + int(((index + 1) / max(1, total_groups)) * 78)
                 progress_callback(
-                    min(percent, 87),
-                    f"កំពុងបង្កើតសំឡេងខ្មែរ {index + 1}/{total_cues}…",
+                    min(percent, 83),
+                    f"កំពុងបង្កើតឃ្លាសំឡេង {index + 1}/{total_groups}…",
                 )
 
         command = ['ffmpeg', '-y']
@@ -1707,87 +1716,65 @@ def create_mp3(srt_text, progress_callback=None):
 
         filters = []
         labels = []
-        final_end_ms = 0
+        previous_end_ms = 0
 
-        for index, cue in enumerate(cues):
-            start_ms = max(0, int(cue['start']))
-            cue_end_ms = max(start_ms + 250, int(cue['end']))
+        for index, group in enumerate(groups):
+            original_start_ms = max(0, int(group['start']))
+            next_original_start = (
+                max(original_start_ms + 250, int(groups[index + 1]['start']))
+                if index + 1 < total_groups else None
+            )
 
-            # The next voice owns its exact start time. The current voice must
-            # finish before that point, so two generated speakers never overlap.
-            if index + 1 < total_cues:
-                next_start_ms = max(start_ms + 250, int(cues[index + 1]['start']))
-                protected_end_ms = min(cue_end_ms, next_start_ms - MIN_VOICE_GAP_MS)
+            # Never start before the original subtitle, but delay naturally when
+            # the preceding phrase still has an audible final word.
+            start_ms = max(original_start_ms, previous_end_ms + (35 if index else 0))
+            audio_seconds = durations[index]
+
+            # Use only a mild speed correction. Strong atempo values make Khmer
+            # speech sound synthetic and cause pitch/rhythm pumping.
+            if next_original_start is not None:
+                available_seconds = max(0.35, (next_original_start - start_ms - 35) / 1000.0)
+                required_speed = audio_seconds / available_seconds
+                safe_speed = min(max(1.0, required_speed), 1.18)
             else:
-                protected_end_ms = cue_end_ms
+                safe_speed = 1.0
 
-            if protected_end_ms <= start_ms + 180:
-                protected_end_ms = start_ms + 180
-
-            slot_seconds = max(0.18, (protected_end_ms - start_ms) / 1000.0)
-            audio_seconds = clip_durations[index]
-
-            # Fit the spoken line to its real available slot. We allow a moderate
-            # speed increase, then hard-trim only as the final overlap safeguard.
-            required_speed = audio_seconds / slot_seconds
-            safe_speed = min(max(1.0, required_speed), MAX_TEMPO_SPEED)
-            tempo = atempo_chain(safe_speed) if safe_speed > 1.001 else ''
             rendered_seconds = audio_seconds / safe_speed
-            trim_seconds = min(rendered_seconds, slot_seconds)
-
-            fade_in = min(VOICE_FADE_IN_SECONDS, max(0.008, trim_seconds * 0.025))
-            fade_out = min(VOICE_FADE_OUT_SECONDS, max(0.015, trim_seconds * 0.045))
-            fade_out_start = max(0.01, trim_seconds - fade_out)
-
+            tempo = atempo_chain(safe_speed) if safe_speed > 1.001 else ''
             label = f'a{index}'
+
             parts = [f'[{index}:a]asetpts=PTS-STARTPTS']
             if tempo:
                 parts.append(tempo)
 
-            # Warm, controlled speech chain:
-            # - reduce rumble and strong airy hiss
-            # - keep Khmer consonants understandable
-            # - use gentle compression only
+            # No atrim and no fade-out: never remove a final Khmer syllable.
             parts.extend([
-                'highpass=f=65:p=2',
-                'lowpass=f=10000:p=2',
-                'equalizer=f=180:t=q:w=1.0:g=0.5',
-                'equalizer=f=900:t=q:w=1.1:g=0.2',
-                'equalizer=f=3000:t=q:w=1.0:g=0.8',
-                'equalizer=f=6500:t=q:w=1.0:g=-0.7',
-                *character_voice_filters(normalize_speaker_tag(cue.get('tag', 'M'))),
-                'dynaudnorm=f=250:g=7:p=0.90:m=5:s=5',
-                'acompressor=threshold=-22dB:ratio=1.35:attack=22:release=220:makeup=1.03:knee=5',
-                f'atrim=0:{trim_seconds:.3f}',
-                'asetpts=PTS-STARTPTS',
-                f'afade=t=in:st=0:d={fade_in:.3f}',
-                f'afade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f}',
-                'alimiter=limit=0.94:attack=7:release=100',
+                'highpass=f=60:p=2',
+                'lowpass=f=9500:p=2',
+                'equalizer=f=250:t=q:w=1.0:g=0.15',
+                'equalizer=f=3200:t=q:w=1.0:g=0.20',
+                'equalizer=f=6500:t=q:w=1.0:g=-0.9',
+                *character_voice_filters(group['tag']),
+                'acompressor=threshold=-19dB:ratio=1.12:attack=45:release=350:makeup=1.0:knee=7',
+                'alimiter=limit=0.95:attack=8:release=150',
                 f'adelay={start_ms}|{start_ms}[{label}]',
             ])
 
             filters.append(','.join(parts).replace('],', ']'))
             labels.append(f'[{label}]')
-            final_end_ms = max(
-                final_end_ms,
-                start_ms + int(trim_seconds * 1000),
-                cue_end_ms,
-            )
+            previous_end_ms = start_ms + int(rendered_seconds * 1000)
 
-        total = (final_end_ms + 350) / 1000.0
-
-        # Master once after mixing. This avoids pumping and exaggerated breath
-        # noise caused by loud-normalizing every small clip independently.
+        total_seconds = (previous_end_ms + 450) / 1000.0
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'acompressor=threshold=-18dB:ratio=1.22:attack=28:release=260:makeup=1.0:knee=6,'
-              'alimiter=limit=0.95:attack=7:release=120,'
-              'loudnorm=I=-16:TP=-1.5:LRA=6,'
-              f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
+              'acompressor=threshold=-17dB:ratio=1.10:attack=50:release=380:makeup=1.0:knee=8,'
+              'alimiter=limit=0.95:attack=10:release=160,'
+              'loudnorm=I=-17:TP=-1.5:LRA=9,'
+              f'apad=whole_dur={total_seconds:.3f},atrim=0:{total_seconds:.3f}[out]'
         )
 
-        output = root / 'khmer_dubbed.mp3'
+        output = root / 'khmer_dubbed_natural.mp3'
         command.extend([
             '-filter_complex', ';'.join(filters),
             '-map', '[out]',
@@ -1799,7 +1786,7 @@ def create_mp3(srt_text, progress_callback=None):
         ])
 
         if progress_callback:
-            progress_callback(92, "កំពុងបញ្ចូលសំឡេងទាំងអស់ជាបទ MP3 តែមួយ…")
+            progress_callback(90, "កំពុងភ្ជាប់ឃ្លាសំឡេងដោយមិនកាត់ពាក្យ…")
 
         result = subprocess.run(command, capture_output=True, text=True, timeout=900)
         if result.returncode != 0:
@@ -1808,7 +1795,7 @@ def create_mp3(srt_text, progress_callback=None):
             raise RuntimeError('MP3 ត្រូវបានបង្កើត ប៉ុន្តែមិនមានសំឡេងគ្រប់គ្រាន់។')
 
         if progress_callback:
-            progress_callback(100, "បង្កើត MP3 រួចរាល់")
+            progress_callback(100, "បង្កើត MP3 សំឡេងធម្មជាតិរួចរាល់")
         return output.read_bytes()
 
 
