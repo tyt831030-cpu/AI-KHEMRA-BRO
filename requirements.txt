@@ -1,8 +1,13 @@
-streamlit>=1.45,<2
-google-genai>=1.0.0
-edge-tts>=7.0.0
-faster-whisper>=1.1.1,<2
-extra-streamlit-components>=0.1.81
-cryptography>=43,<47
-imageio-ffmpeg>=0.6.0,<1
-deep-translator>=1.11.4,<2
+streamlit សម្រាប់បង្កើតផ្ទៃកម្មវិធី (UI)
+
+google-genai សម្រាប់ភ្ជាប់ទៅកាន់ Gemini API ជំនាន់ថ្មី
+
+edge-tts សម្រាប់បំប្លែងអត្ថបទទៅជាសំឡេងខ្មែរ
+
+faster-whisper សម្រាប់ស្កែន និងស្គាល់សំឡេងពីវីដេអូ
+
+extra-streamlit-components សម្រាប់គ្រប់គ្រង Cookie និងរក្សា Session Login
+
+cryptography សម្រាប់ការពារសុវត្ថិភាពសោ API Key របស់អតិថិជន
+
+imageio-ffmpeg និង deep-translator ជាប្រព័ន្ធជំនួយ និងបម្រុង (Fallback) នៅលើ Server
