@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "6.4-4VOICE-AIR-CLEAN"
+APP_VERSION = "6.5-VOICE-LOCK"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -402,13 +402,14 @@ SREYMOM='km-KH-SreymomNeural'
 # Four-tag voice system only. Rates are slightly quicker so long Khmer lines fit
 # naturally without aggressive FFmpeg stretching. Pitch stays near neutral to
 # avoid dry, thin or metallic speech.
+# Locked profiles: the same tag always uses exactly the same Edge-TTS settings.
+# Normal dialogue stays neutral and stable. Inner-thought voices are deliberately
+# softer, slower and slightly lighter so they are clearly different.
 VOICE_PROFILES={
-    # Normal dialogue: soft, clear and close to the original Edge voices.
-    'M':{'voice':PISITH,'rate':'+0%','pitch':'-2Hz','volume':'+2%'},
-    'F':{'voice':SREYMOM,'rate':'+0%','pitch':'-1Hz','volume':'+2%'},
-    # Inner thought: clearly different, gentler and slightly slower.
-    'M_THINK':{'voice':PISITH,'rate':'-6%','pitch':'-5Hz','volume':'-5%'},
-    'F_THINK':{'voice':SREYMOM,'rate':'-6%','pitch':'-4Hz','volume':'-5%'},
+    'M':{'voice':PISITH,'rate':'+0%','pitch':'+0Hz','volume':'+0%'},
+    'F':{'voice':SREYMOM,'rate':'+0%','pitch':'+0Hz','volume':'+0%'},
+    'M_THINK':{'voice':PISITH,'rate':'-7%','pitch':'+6Hz','volume':'-10%'},
+    'F_THINK':{'voice':SREYMOM,'rate':'-7%','pitch':'+8Hz','volume':'-10%'},
 }
 VALID_SPEAKER_TAGS={'M','F','M_THINK','F_THINK'}
 
@@ -424,10 +425,10 @@ def normalize_speaker_tag(tag):
     return 'M'
 
 # Longer soft fades and a small protected gap remove clicks and abrupt cuts.
-VOICE_FADE_IN_SECONDS = 0.040
-VOICE_FADE_OUT_SECONDS = 0.075
-MIN_VOICE_GAP_MS = 28
-MAX_TEMPO_SPEED = 1.32
+VOICE_FADE_IN_SECONDS = 0.060
+VOICE_FADE_OUT_SECONDS = 0.110
+MIN_VOICE_GAP_MS = 20
+MAX_TEMPO_SPEED = 1.25
 
 TRANSLATE_PROMPT = """You are an expert Khmer movie subtitler, Chinese-drama translator, dubbing script writer, and character-continuity editor.
 The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
@@ -446,7 +447,10 @@ SPEAKER AND CHARACTER RULES:
 - Keep each recurring character on a consistent gender/age/role tag across nearby cues. Never switch a character's label merely because the emotion, volume, camera angle, or speaking style changes.
 - Before assigning a new tag, compare with the preceding and following cues. Change the tag only when the actual speaker changes or clear video/audio evidence proves a different age/gender/role.
 - Use M for every spoken male dialogue and F for every spoken female dialogue.
-- Use M_THINK or F_THINK only when the audio/video clearly proves an unheard internal monologue. If uncertain, use M or F.
+- Use M_THINK or F_THINK only for unheard inner thoughts/internal monologue.
+- VOICE TAG LOCK: once a recurring character is identified as M or F, keep that gender for all nearby cues. Do not alternate M/F on consecutive cues unless the speaker clearly changes.
+- THINK is only a speaking mode, not a new character: M_THINK must belong to the same male character as M, and F_THINK to the same female character as F.
+- Be extremely conservative with THINK. If there is any doubt whether the line is audible dialogue, use M or F, not THINK.
 - Narration that is audibly spoken uses M or F according to the narrator's gender.
 - Never output any tag other than M, F, M_THINK, F_THINK.
 
@@ -532,7 +536,7 @@ Rules:
 - Do not alter timestamps, cue count, or cue order.
 - Keep recurring character identity and tag consistent across nearby cues.
 - Ordinary audible dialogue must use the correct age-and-gender label, even when calm, soft, sad, angry, or whispering.
-- Use M_THINK/F_THINK only when clearly proven as unheard internal monologue. If uncertain, keep M or F. All audible narration/dialogue must use M or F. Never use another tag.
+- Use M_THINK/F_THINK only for unheard internal monologue. All audible narration/dialogue must use M or F. Never use another tag.
 - Rewrite Khmer into fluent, natural everyday Cambodian dialogue suitable for professional movie dubbing; never use stiff word-for-word or book-like phrasing.
 - Read each Khmer line as spoken dialogue: if a Cambodian would not normally say it that way, rewrite it using shorter and more familiar wording.
 - Respect each cue's MAX_WORDS strictly so dubbing can play at a normal pace.
@@ -1548,34 +1552,73 @@ async def synthesize(text, profile, output_path):
     raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
 
 def character_voice_filters(tag):
-    """Warm dialogue and clearly softer inner-thought sound without harsh air."""
+    """Stable per-tag tone and loudness; inner thoughts are light and soft."""
     mapping = {
         'M': [
             'equalizer=f=180:t=q:w=1.0:g=0.7',
-            'equalizer=f=3000:t=q:w=1.1:g=-0.2',
-            'equalizer=f=6200:t=q:w=1.0:g=-1.6',
+            'equalizer=f=3200:t=q:w=1.0:g=0.1',
+            'volume=1.00',
         ],
         'F': [
-            'equalizer=f=220:t=q:w=1.0:g=0.5',
-            'equalizer=f=3200:t=q:w=1.1:g=-0.3',
-            'equalizer=f=6500:t=q:w=1.0:g=-1.8',
+            'equalizer=f=230:t=q:w=1.0:g=0.5',
+            'equalizer=f=3400:t=q:w=1.0:g=0.1',
+            'volume=1.00',
         ],
         'M_THINK': [
-            'equalizer=f=190:t=q:w=1.0:g=0.5',
-            'equalizer=f=3400:t=q:w=1.0:g=-1.2',
-            'equalizer=f=6200:t=q:w=1.0:g=-2.6',
-            'aecho=0.8:0.25:38:0.07',
-            'volume=0.88',
+            'highpass=f=95:p=2',
+            'equalizer=f=220:t=q:w=1.0:g=-0.4',
+            'equalizer=f=1800:t=q:w=1.0:g=0.5',
+            'equalizer=f=5200:t=q:w=1.0:g=-1.5',
+            'volume=0.82',
         ],
         'F_THINK': [
-            'equalizer=f=230:t=q:w=1.0:g=0.4',
-            'equalizer=f=3600:t=q:w=1.0:g=-1.3',
-            'equalizer=f=6500:t=q:w=1.0:g=-2.8',
-            'aecho=0.8:0.25:38:0.07',
-            'volume=0.88',
+            'highpass=f=105:p=2',
+            'equalizer=f=260:t=q:w=1.0:g=-0.3',
+            'equalizer=f=2000:t=q:w=1.0:g=0.5',
+            'equalizer=f=5400:t=q:w=1.0:g=-1.5',
+            'volume=0.82',
         ],
     }
     return mapping.get(normalize_speaker_tag(tag), mapping['M'])
+
+
+def lock_voice_tags(cues):
+    """Conservatively stabilize obvious one-cue gender mistakes.
+
+    A single M/F tag between two matching neighboring tags is treated as a
+    detector glitch. THINK remains a mode of the same gender and never changes
+    the character's gender. This avoids rapid M/F switching while preserving
+    genuine speaker changes.
+    """
+    if not cues:
+        return cues
+    locked = [dict(cue) for cue in cues]
+
+    def gender(tag):
+        return 'F' if normalize_speaker_tag(tag).startswith('F') else 'M'
+
+    def thought(tag):
+        return normalize_speaker_tag(tag).endswith('_THINK')
+
+    # Remove isolated gender flips only when both neighbors agree.
+    for i in range(1, len(locked) - 1):
+        left, cur, right = locked[i - 1], locked[i], locked[i + 1]
+        lg, cg, rg = gender(left.get('tag')), gender(cur.get('tag')), gender(right.get('tag'))
+        if lg == rg and cg != lg:
+            cur['tag'] = f'{lg}_THINK' if thought(cur.get('tag')) else lg
+
+    # A THINK tag must keep the gender of adjacent dialogue when both sides agree.
+    for i, cue in enumerate(locked):
+        if not thought(cue.get('tag')):
+            continue
+        neighbor_genders = []
+        if i > 0:
+            neighbor_genders.append(gender(locked[i - 1].get('tag')))
+        if i + 1 < len(locked):
+            neighbor_genders.append(gender(locked[i + 1].get('tag')))
+        if len(neighbor_genders) == 2 and neighbor_genders[0] == neighbor_genders[1]:
+            cue['tag'] = f'{neighbor_genders[0]}_THINK'
+    return locked
 
 
 def probe_audio_duration(path):
@@ -1611,14 +1654,14 @@ def create_mp3(srt_text, progress_callback=None):
     """
     Create one synchronized Khmer MP3.
 
-    v3.1 air-clean rules:
+    v3.0 rules:
     - Every voice starts at the original SRT start timestamp.
     - A clip is fitted inside the time available before the next cue.
     - Generated voices never overlap or compete with one another.
     - Breathy high frequencies are reduced without making speech muddy.
     - Loudness is mastered once at the end instead of aggressively per clip.
     """
-    cues = parse_srt(srt_text)
+    cues = lock_voice_tags(parse_srt(srt_text))
     if not cues:
         raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
 
@@ -1701,20 +1744,20 @@ def create_mp3(srt_text, progress_callback=None):
             # - use gentle compression only
             parts.extend([
                 'highpass=f=65:p=2',
-                'lowpass=f=7800:p=2',
+                'lowpass=f=8200:p=2',
                 'equalizer=f=180:t=q:w=1.0:g=0.8',
                 'equalizer=f=350:t=q:w=1.1:g=0.5',
                 'equalizer=f=1200:t=q:w=1.2:g=0.3',
                 'equalizer=f=2800:t=q:w=1.1:g=0.3',
-                'equalizer=f=5000:t=q:w=1.0:g=-1.8',
-                'equalizer=f=7200:t=q:w=0.9:g=-2.4',
+                'equalizer=f=5200:t=q:w=1.0:g=-1.5',
+                'equalizer=f=7400:t=q:w=0.9:g=-1.8',
                 *character_voice_filters(normalize_speaker_tag(cue.get('tag', 'M'))),
-                'acompressor=threshold=-23dB:ratio=1.35:attack=28:release=300:makeup=1.0:knee=6',
+                'acompressor=threshold=-23dB:ratio=1.45:attack=28:release=300:makeup=1.02:knee=6',
                 f'atrim=0:{trim_seconds:.3f}',
                 'asetpts=PTS-STARTPTS',
                 f'afade=t=in:st=0:d={fade_in:.3f}',
                 f'afade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f}',
-                'alimiter=limit=0.91:attack=10:release=150',
+                'alimiter=limit=0.94:attack=7:release=100',
                 f'adelay={start_ms}|{start_ms}[{label}]',
             ])
 
@@ -1733,9 +1776,9 @@ def create_mp3(srt_text, progress_callback=None):
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'acompressor=threshold=-18dB:ratio=1.22:attack=35:release=340:makeup=1.0:knee=7,'
-              'alimiter=limit=0.91:attack=12:release=180,'
-              'loudnorm=I=-18.5:TP=-2.0:LRA=11,'
+              'acompressor=threshold=-18dB:ratio=1.25:attack=30:release=320:makeup=1.0:knee=7,'
+              'alimiter=limit=0.94:attack=8:release=150,'
+              'loudnorm=I=-18:TP=-2.0:LRA=7,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
@@ -1745,8 +1788,8 @@ def create_mp3(srt_text, progress_callback=None):
             '-map', '[out]',
             '-c:a', 'libmp3lame',
             '-ac', '1',
-            '-ar', '48000',
-            '-b:a', '192k',
+            '-ar', '44100',
+            '-b:a', '160k',
             str(output),
         ])
 
