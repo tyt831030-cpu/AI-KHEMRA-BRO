@@ -1,43 +1,37 @@
-# AI KHEMRA BRO v7.3 — Khmer-Only + Faster Processing
+# AI KHEMRA BRO — Full UI + Private Admin
 
-Use exactly four files in the GitHub repository root:
+This build keeps the full original UI and features from `app(28).py` and adds private customer licensing.
 
-- app.py
-- requirements.txt
-- packages.txt
-- README.md
+## Public customer flow
+- Customer enters registered name and Access Code.
+- Valid, active, unexpired licenses unlock the full Video → SRT → MP3 application.
+- Expired, blocked, or invalid licenses are rejected automatically.
 
-## Fixed
+## Private owner flow
+1. On the customer login screen, tap the small `✦` control at the top-right five times.
+2. Enter the owner name and password.
+3. Create customer codes for 7 days, 30 days, or 365 days.
+4. Renew, block/unblock, or delete customer codes.
 
-- Rejects Thai subtitles completely.
-- Rejects Chinese, Vietnamese, English, and Latin-letter dialogue.
-- Requires real Cambodian Khmer Unicode before SRT can be generated.
-- Automatically retries only the incorrect subtitle lines.
-- Prevents wrong-language text from being placed in the final SRT.
-- Reduces Whisper CPU processing time by using beam_size=5 and best_of=3.
-- Keeps FFmpeg and clear-audio fixes from v7.2.
+## Streamlit Secrets (recommended)
+Add these in Streamlit Cloud → App settings → Secrets:
+
+```toml
+ADMIN_USERNAME = "KHEMRA"
+ADMIN_PASSWORD = "YOUR_PRIVATE_PASSWORD"
+COOKIE_SECRET = "A-LONG-RANDOM-PRIVATE-SECRET"
+```
+
+The file contains the requested initial fallback credentials so it can run immediately. Using Streamlit Secrets is safer because public GitHub source can be viewed.
 
 ## Install
+Upload these four files to the root of the existing GitHub repository:
+- `app.py`
+- `requirements.txt`
+- `packages.txt`
+- `README.md`
 
-Replace the old four files in GitHub, then:
+Set the Streamlit main file path to `app.py`.
 
-Streamlit → Manage app → Reboot app
-
-After reboot, upload the video again and press Generate Khmer SRT.
-
-## Version 7.6 update
-- Gemini structured JSON subtitle output
-- 10-line translation chunks with 1:1 ID preservation
-- automatic API-key and Gemini model fallback
-- targeted retry for missing subtitle lines
-- optional deep-translator fallback when Gemini quota is exhausted
-- Khmer-only validation; Chinese source text is never copied into final Khmer SRT
-- speaker-tag voice profiles and updated MP3 cleanup filter
-
-
-## Version 8.1 changes
-- Gemini first, automatic Google Translate fallback.
-- Only four SRT voice tags: `[M]`, `[F]`, `[M_THINK]`, `[F_THINK]`.
-- Removed Gemini response-schema fields that caused HTTP 400 errors.
-- Blocks Chinese/Thai text before MP3 generation.
-- License database initialization and `st.rerun()` session cleanup retained.
+## Database note
+`licenses.db` is created automatically. Streamlit Community Cloud local files may reset after restart/redeploy. For long-term paid use, move licenses to Supabase/PostgreSQL.
