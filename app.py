@@ -408,8 +408,8 @@ SREYMOM='km-KH-SreymomNeural'
 VOICE_PROFILES={
     'M':{'voice':PISITH,'rate':'+0%','pitch':'+0Hz','volume':'+0%'},
     'F':{'voice':SREYMOM,'rate':'+0%','pitch':'+0Hz','volume':'+0%'},
-    'M_THINK':{'voice':PISITH,'rate':'-7%','pitch':'+6Hz','volume':'-10%'},
-    'F_THINK':{'voice':SREYMOM,'rate':'-7%','pitch':'+8Hz','volume':'-10%'},
+    'M_THINK':{'voice':PISITH,'rate':'-14%','pitch':'+10Hz','volume':'-18%'},
+    'F_THINK':{'voice':SREYMOM,'rate':'-14%','pitch':'+12Hz','volume':'-18%'},
 }
 VALID_SPEAKER_TAGS={'M','F','M_THINK','F_THINK'}
 
