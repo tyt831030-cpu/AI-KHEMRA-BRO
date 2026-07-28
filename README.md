@@ -1,43 +1,35 @@
-# AI KHEMRA BRO v7.3 — Khmer-Only + Faster Processing
+# AI KHEMRA BRO v9.0
 
-Use exactly four files in the GitHub repository root:
+## Main fix
 
-- app.py
-- requirements.txt
-- packages.txt
-- README.md
+- The app no longer places Chinese/Source SRT inside the Khmer SRT editor when Gemini translation fails.
+- Source SRT is saved separately and can be downloaded with **Download Source SRT**.
+- MP3 generation is locked until every subtitle cue contains valid Khmer-only dialogue.
+- Mixed Latin, Chinese, or Thai dialogue is rejected before Edge TTS runs.
+- Gemini model choices were cleaned to supported fallback names: `gemini-2.5-flash-lite`, `gemini-2.5-flash`, and `gemini-flash-latest`.
+- Keeps Whisper timestamps, API-key rotation, encrypted saved keys, licensing, mobile UI, and FFmpeg audio workflow.
 
-## Fixed
+## Repository files
 
-- Rejects Thai subtitles completely.
-- Rejects Chinese, Vietnamese, English, and Latin-letter dialogue.
-- Requires real Cambodian Khmer Unicode before SRT can be generated.
-- Automatically retries only the incorrect subtitle lines.
-- Prevents wrong-language text from being placed in the final SRT.
-- Reduces Whisper CPU processing time by using beam_size=5 and best_of=3.
-- Keeps FFmpeg and clear-audio fixes from v7.2.
+Upload these four files to the repository root:
 
-## Install
+- `app.py`
+- `requirements.txt`
+- `packages.txt`
+- `README.md`
 
-Replace the old four files in GitHub, then:
+Then reboot/redeploy the Streamlit or Railway service.
 
-Streamlit → Manage app → Reboot app
+## Required server secret
 
-After reboot, upload the video again and press Generate Khmer SRT.
+Keep your existing owner/admin and encryption secrets. Each customer enters their own Gemini API key in the app Settings menu.
 
-## Version 7.6 update
-- Gemini structured JSON subtitle output
-- 10-line translation chunks with 1:1 ID preservation
-- automatic API-key and Gemini model fallback
-- targeted retry for missing subtitle lines
-- optional deep-translator fallback when Gemini quota is exhausted
-- Khmer-only validation; Chinese source text is never copied into final Khmer SRT
-- speaker-tag voice profiles and updated MP3 cleanup filter
+## Correct workflow
 
+1. Upload video.
+2. Press **Generate Khmer SRT**.
+3. When Gemini succeeds, valid Khmer SRT appears in the editor.
+4. Edit the Khmer text if needed.
+5. Press **Generate Dubbed Audio (MP3)**.
 
-## Version 8.1 changes
-- Gemini first, automatic Google Translate fallback.
-- Only four SRT voice tags: `[M]`, `[F]`, `[M_THINK]`, `[F_THINK]`.
-- Removed Gemini response-schema fields that caused HTTP 400 errors.
-- Blocks Chinese/Thai text before MP3 generation.
-- License database initialization and `st.rerun()` session cleanup retained.
+When translation fails, the app shows a warning and offers the Source SRT separately. It does not pretend the Chinese transcript is Khmer.
