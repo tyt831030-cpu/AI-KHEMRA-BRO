@@ -34,7 +34,7 @@ try:
 except Exception:
     imageio_ffmpeg = None
 
-APP_VERSION = "8.1"
+APP_VERSION = "9.3"
 
 
 
@@ -1427,21 +1427,38 @@ CUES:
 
 
 def _google_translate_fallback(cues, target_lang="km"):
-    """Last-resort line-by-line fallback. Never copies Chinese source into Khmer SRT."""
+    """Reliable no-key fallback with retries; source text is never copied into Khmer output."""
     if GoogleTranslator is None:
         raise RuntimeError("deep-translator មិនទាន់បានដំឡើង។")
-    translator = GoogleTranslator(source="auto", target=target_lang)
+
     result = {}
+    translator = GoogleTranslator(source="auto", target=target_lang)
     for cue in cues:
         source = str(cue.get("source", "")).strip()
         if not source:
             result[cue["id"]] = {"tag": "M", "text": "…"}
             continue
-        translated = normalize_dialogue(translator.translate(source) or "")
+
+        last_error = None
+        translated = ""
+        for attempt in range(4):
+            try:
+                translated = normalize_dialogue(translator.translate(source) or "")
+                if is_valid_khmer_dialogue(translated):
+                    break
+                last_error = RuntimeError("លទ្ធផលមិនមែនជាភាសាខ្មែរត្រឹមត្រូវ")
+            except Exception as exc:
+                last_error = exc
+                # Recreate the translator because its HTTP session can expire on Streamlit Cloud.
+                translator = GoogleTranslator(source="auto", target=target_lang)
+            time.sleep(min(4.0, 0.8 * (attempt + 1)))
+
         if not is_valid_khmer_dialogue(translated):
-            raise RuntimeError(f"ប្រព័ន្ធបម្រុងមិនអាចបកប្រែបន្ទាត់ {cue['id']} ជាខ្មែរបាន។")
+            raise RuntimeError(
+                f"ប្រព័ន្ធបកប្រែបម្រុងមិនអាចបកប្រែបន្ទាត់ {cue['id']} បាន៖ {last_error}"
+            )
         result[cue["id"]] = {"tag": "M", "text": translated}
-        time.sleep(0.15)
+        time.sleep(0.08)
     return result
 
 
@@ -1513,8 +1530,6 @@ def video_to_srt(video_path, api_keys, model, prepared_cues=None):
     if isinstance(api_keys, str):
         api_keys = [api_keys]
     api_keys = [str(key).strip() for key in api_keys if str(key).strip()]
-    if not api_keys:
-        raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
 
     if prepared_cues is None:
         with tempfile.TemporaryDirectory() as folder:
@@ -2933,33 +2948,32 @@ with tab_video:
 
                     st.session_state.source_srt_text = source_srt
 
+                    progress_bar.progress(62)
                     if valid_api_keys:
-                        progress_bar.progress(62)
                         progress_text.markdown("### ⏱️ 62%<br>🌐 កំពុងបកប្រែទៅភាសាខ្មែរ…", unsafe_allow_html=True)
-                        try:
-                            with ThreadPoolExecutor(max_workers=1) as executor:
-                                future = executor.submit(video_to_srt, video_path, valid_api_keys, model, cues)
-                                while not future.done():
-                                    elapsed = time.time() - started_at
-                                    percent = min(96, 62 + int((elapsed / max(40.0, 30.0 + size_mb * 2.5)) * 34))
-                                    minutes, seconds = divmod(int(elapsed), 60)
-                                    progress_bar.progress(percent)
-                                    progress_text.markdown(f"### ⏱️ {percent}% • {minutes:02d}:{seconds:02d}<br>🌐 កំពុងបកប្រែទៅភាសាខ្មែរ…", unsafe_allow_html=True)
-                                    time.sleep(0.5)
-                                generated_srt = future.result()
-                            notice = "✅ Khmer SRT បានបង្កើតរួចរាល់។"
-                        except Exception as translation_exc:
-                            # Preserve Source SRT separately. Never place Chinese/source text
-                            # inside the Khmer editor, because it later breaks Khmer MP3 generation.
-                            generated_srt = st.session_state.get("srt_text", "")
-                            notice = (
-                                "⚠️ បានទាញអត្ថបទដើមចេញពីវីដេអូរួច ប៉ុន្តែ Gemini មិនអាចបកប្រែទៅខ្មែរបាន។ "
-                                "សូមទាញយក Source SRT ខាងក្រោម ឬប្តូរ API Key រួចសាកម្តងទៀត។ "
-                                + friendly_ai_error(translation_exc, len(valid_api_keys))
-                            )
                     else:
-                        generated_srt = st.session_state.get("srt_text", "")
-                        notice = "⚠️ បានទាញអត្ថបទដើមចេញពីវីដេអូរួច។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។"
+                        progress_text.markdown("### ⏱️ 62%<br>🌐 កំពុងប្រើប្រព័ន្ធបកប្រែបម្រុងទៅភាសាខ្មែរ…", unsafe_allow_html=True)
+                    try:
+                        # Gemini is preferred. When no key, quota, or model error occurs,
+                        # video_to_srt automatically continues with Google Translate fallback.
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(video_to_srt, video_path, valid_api_keys, model, cues)
+                            while not future.done():
+                                elapsed = time.time() - started_at
+                                percent = min(96, 62 + int((elapsed / max(40.0, 30.0 + size_mb * 2.5)) * 34))
+                                minutes, seconds = divmod(int(elapsed), 60)
+                                progress_bar.progress(percent)
+                                progress_text.markdown(f"### ⏱️ {percent}% • {minutes:02d}:{seconds:02d}<br>🌐 កំពុងបកប្រែទៅភាសាខ្មែរ…", unsafe_allow_html=True)
+                                time.sleep(0.5)
+                            generated_srt = future.result()
+                        notice = "✅ Khmer SRT បានបង្កើតរួចរាល់។"
+                    except Exception as translation_exc:
+                        generated_srt = ""
+                        notice = (
+                            "⚠️ បានទាញ Source SRT រួច ប៉ុន្តែប្រព័ន្ធបកប្រែទាំង Gemini និងប្រព័ន្ធបម្រុងមិនបានសម្រេច។ "
+                            "Source SRT របស់អ្នកនៅតែអាចទាញយកបាន។ សូមពិនិត្យអ៊ីនធឺណិត ឬ API Key ហើយសាកម្ដងទៀត។ "
+                            + str(translation_exc)[:500]
+                        )
 
                     st.session_state.srt_text = generated_srt
                     st.session_state.main_srt_editor = generated_srt
