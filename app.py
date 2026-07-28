@@ -33,7 +33,7 @@ try:
 except Exception:
     imageio_ffmpeg = None
 
-APP_VERSION = "7.7"
+APP_VERSION = "7.8"
 
 
 
@@ -1287,9 +1287,6 @@ def _candidate_gemini_models(selected_model):
     """Return current stable Gemini Flash models in fast-first fallback order."""
     ordered = [
         str(selected_model or "").strip(),
-        "gemini-3.5-flash-lite",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.5-flash",
     ]
@@ -1301,7 +1298,7 @@ def _candidate_gemini_models(selected_model):
     return result
 
 def _translate_batch_text_only(client, model_name, batch, previous_context=""):
-    """Translate one small batch with Gemini structured JSON output."""
+    """Translate one small batch without SDK response_schema incompatibilities."""
     cue_lines = "\n".join(
         f'ID={cue["id"]} | TIME={seconds_to_srt(cue["start"])} --> '
         f'{seconds_to_srt(cue["end"])} | SOURCE={cue["source"]}'
@@ -1309,16 +1306,17 @@ def _translate_batch_text_only(client, model_name, batch, previous_context=""):
     )
     prompt = f"""
 You are a professional Khmer subtitle translator for Chinese dramas.
-Translate every SOURCE value into natural spoken Khmer.
+Translate every SOURCE value into natural spoken Cambodian Khmer.
 
 STRICT RULES:
-1. Return EXACTLY {len(batch)} objects, one object for every input ID.
-2. Keep strict 1:1 mapping; never merge, split, omit, reorder, or invent an ID.
-3. Keep each ID unchanged. Translate only the SOURCE meaning.
-4. Preserve names, numbers, negations, fillers, cries, emotional reactions, and context.
-5. The text field must contain natural Cambodian Khmer only. No Chinese, Thai, Vietnamese, English, pinyin, or Latin dialogue.
-6. Choose exactly one speaker tag from: M, F, M_THINK, F_THINK.
-7. Return JSON only, following the required schema.
+1. Return one valid JSON array and nothing else.
+2. Return EXACTLY {len(batch)} objects, one object for every input ID.
+3. Every object must be: {{"id": integer, "tag": "M|F|M_THINK|F_THINK", "text": "Khmer only"}}.
+4. Keep strict 1:1 mapping; never merge, split, omit, reorder, or invent an ID.
+5. Keep each ID unchanged. Preserve names, numbers, negations, fillers, cries, and reactions.
+6. Use ONLY these four tags: M, F, M_THINK, F_THINK.
+7. The text field must contain Khmer script only. Never copy Chinese source text.
+8. Do not use markdown fences, comments, or extra keys.
 
 RECENT CONTEXT:
 {previous_context or '(none)'}
@@ -1327,35 +1325,18 @@ CUES:
 {cue_lines}
 """.strip()
 
-    schema = {
-        "type": "array",
-        "minItems": len(batch),
-        "maxItems": len(batch),
-        "items": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "integer"},
-                "tag": {
-                    "type": "string",
-                    "enum": ["M", "F", "M_THINK", "F_THINK"],
-                },
-                "text": {"type": "string"},
-            },
-            "required": ["id", "tag", "text"],
-        },
-    }
-
+    # Deliberately avoid response_schema. Some google-genai/API combinations
+    # serialize JSON-schema keywords into unsupported fields and return 400.
     response = client.models.generate_content(
         model=model_name,
         contents=[prompt],
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=schema,
             temperature=0.2,
         ),
     )
     rows = parse_json_array(response.text or "")
-    allowed_ids = [cue["id"] for cue in batch]
+    allowed_ids = {cue["id"] for cue in batch}
     parsed = {}
     for row in rows:
         try:
@@ -1369,7 +1350,6 @@ CUES:
         if is_valid_khmer_dialogue(dialogue):
             parsed[cue_id] = {"tag": tag, "text": dialogue}
     return parsed
-
 
 def _google_translate_fallback(cues, target_lang="km"):
     """Last-resort line-by-line fallback. Never copies Chinese source into Khmer SRT."""
@@ -1398,7 +1378,7 @@ def _merge_missing_translations(base, extra):
 
 
 def translate_cues_text_only(client, model_name, cues):
-    """Translate in 10-line chunks with validation, targeted retries, and pacing."""
+    """Translate safely in small chunks; quota errors fall back immediately."""
     translated = {}
     batch_size = 10
     for offset in range(0, len(cues), batch_size):
@@ -1411,47 +1391,57 @@ def translate_cues_text_only(client, model_name, cues):
                     f'ID={cue["id"]} TAG={item["tag"]} SOURCE={cue["source"]} KHMER={item["text"]}'
                 )
 
-        last_error = None
         parsed = {}
-        for attempt in range(3):
+        last_error = None
+        for attempt in range(2):
             try:
                 parsed = _translate_batch_text_only(
                     client, model_name, batch, "\n".join(context_rows)
                 )
                 missing = [cue for cue in batch if cue["id"] not in parsed]
-                if not missing:
-                    break
-                # Retry only missing lines; never fill them with original Chinese text.
-                repaired = _translate_batch_text_only(
-                    client,
-                    model_name,
-                    missing,
-                    "Previous output missed lines. Return every requested ID in Khmer only.",
-                )
-                _merge_missing_translations(parsed, repaired)
+                if missing:
+                    repaired = _translate_batch_text_only(
+                        client,
+                        model_name,
+                        missing,
+                        "Previous output missed these lines. Return every ID in Khmer only.",
+                    )
+                    _merge_missing_translations(parsed, repaired)
                 if all(cue["id"] in parsed for cue in batch):
                     break
             except Exception as exc:
                 last_error = exc
-                if not is_quota_error(exc) and attempt == 2:
-                    raise
-                time.sleep(min(12.0, 2.0 * (2 ** attempt)))
+                if is_quota_error(exc):
+                    break
+                if attempt == 1:
+                    break
+                time.sleep(1.5)
 
-        translated.update(parsed)
-        missing = [cue for cue in batch if cue["id"] not in translated]
+        missing = [cue for cue in batch if cue["id"] not in parsed]
         if missing:
-            if last_error:
-                raise last_error
+            # Use Google Translate only for the missing batch. This prevents a
+            # Gemini 429 from returning Chinese text to the Khmer editor.
+            try:
+                fallback = _google_translate_fallback(missing)
+                _merge_missing_translations(parsed, fallback)
+            except Exception as fallback_exc:
+                if last_error is not None:
+                    raise RuntimeError(
+                        friendly_ai_error(last_error, 1)
+                        + f" ប្រព័ន្ធបម្រុងមិនអាចបកប្រែបាន៖ {fallback_exc}"
+                    ) from fallback_exc
+                raise
+
+        still_missing = [cue["id"] for cue in batch if cue["id"] not in parsed]
+        if still_missing:
             raise RuntimeError(
-                "AI មិនបានត្រឡប់បន្ទាត់ SRT គ្រប់គ្រាន់៖ "
-                + ", ".join(str(cue["id"]) for cue in missing)
+                "មិនអាចបង្កើតអក្សរខ្មែរគ្រប់បន្ទាត់បាន៖ "
+                + ", ".join(map(str, still_missing))
             )
-
-        # Gentle pacing protects per-minute request limits without making the app too slow.
+        translated.update(parsed)
         if offset + batch_size < len(cues):
-            time.sleep(1.0)
+            time.sleep(0.35)
     return translated
-
 
 def video_to_srt(video_path, api_keys, model, prepared_cues=None):
     """FFmpeg -> Whisper -> Gemini key/model rotation -> optional Google fallback."""
@@ -1710,6 +1700,8 @@ def atempo_chain(speed):
 
 
 def create_mp3(srt_text, progress_callback=None):
+    if contains_cjk(srt_text) or contains_thai(srt_text):
+        raise ValueError("SRT នៅមានអក្សរចិន/ថៃ។ សូមបកប្រែជាខ្មែរមុនបង្កើត MP3។")
     """
     Create one synchronized Khmer MP3.
 
@@ -2913,15 +2905,17 @@ with tab_video:
                                 generated_srt = future.result()
                             notice = "✅ Khmer SRT បានបង្កើតរួចរាល់។"
                         except Exception as translation_exc:
-                            # Never discard Whisper output when Gemini quota/key fails.
-                            generated_srt = source_srt
+                            # Keep source transcription internally for recovery, but never
+                            # place Chinese text in the Khmer editor or send it to Edge TTS.
+                            generated_srt = ""
                             notice = (
-                                "⚠️ Whisper បានបង្កើត Source SRT រួច ប៉ុន្តែ Gemini មិនអាចបកប្រែបាន។ "
+                                "⚠️ មិនទាន់អាចបង្កើត Khmer SRT បានទេ។ "
                                 + friendly_ai_error(translation_exc, len(valid_api_keys))
+                                + " Source SRT ត្រូវបានរក្សាទុកខាងក្នុង មិនត្រូវបានផ្ញើទៅ MP3 ទេ។"
                             )
                     else:
-                        generated_srt = source_srt
-                        notice = "⚠️ បានបង្កើត Source SRT រួច។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។"
+                        generated_srt = ""
+                        notice = "⚠️ Source SRT បានបង្កើត និងរក្សាទុកខាងក្នុង។ សូមដាក់ Gemini API Key ដើម្បីទទួល Khmer SRT; អក្សរចិនមិនត្រូវបានផ្ញើទៅ MP3 ទេ។"
 
                     st.session_state.srt_text = generated_srt
                     st.session_state.main_srt_editor = generated_srt
