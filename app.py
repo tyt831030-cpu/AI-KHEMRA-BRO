@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "6.2"
+APP_VERSION = "6.3-4VOICE-SMOOTH"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -398,33 +398,34 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
 
 PISITH='km-KH-PisethNeural'
 SREYMOM='km-KH-SreymomNeural'
-VOICE_PROFILES={
-# Warm, natural profiles. Large pitch boosts make Khmer Neural voices thin/airy,
-# so age differences use mostly rate and only a very small pitch movement.
-'BOY':{'voice':PISITH,'rate':'+4%','pitch':'+2Hz','volume':'+5%'},
-'GIRL':{'voice':SREYMOM,'rate':'+4%','pitch':'+3Hz','volume':'+5%'},
-'M_YOUNG':{'voice':PISITH,'rate':'+1%','pitch':'+0Hz','volume':'+6%'},
-'F_YOUNG':{'voice':SREYMOM,'rate':'+1%','pitch':'+1Hz','volume':'+6%'},
-'M_ADULT':{'voice':PISITH,'rate':'-3%','pitch':'-3Hz','volume':'+7%'},
-'F_ADULT':{'voice':SREYMOM,'rate':'-2%','pitch':'-1Hz','volume':'+7%'},
-'M_OLD':{'voice':PISITH,'rate':'-11%','pitch':'-8Hz','volume':'+8%'},
-'F_OLD':{'voice':SREYMOM,'rate':'-10%','pitch':'-6Hz','volume':'+8%'},
-'M_THINK':{'voice':PISITH,'rate':'-7%','pitch':'-4Hz','volume':'+5%'},
-'F_THINK':{'voice':SREYMOM,'rate':'-7%','pitch':'-3Hz','volume':'+5%'},
-'NARRATOR_M':{'voice':PISITH,'rate':'-7%','pitch':'-6Hz','volume':'+8%'},
-'NARRATOR_F':{'voice':SREYMOM,'rate':'-6%','pitch':'-4Hz','volume':'+8%'},
-# Backward-compatible labels for older SRT files.
-'M':{'voice':PISITH,'rate':'-3%','pitch':'-2Hz','volume':'+7%'},
-'F':{'voice':SREYMOM,'rate':'-3%','pitch':'-1Hz','volume':'+7%'},
-'OLD_M':{'voice':PISITH,'rate':'-8%','pitch':'-5Hz','volume':'+8%'},
-'OLD_F':{'voice':SREYMOM,'rate':'-8%','pitch':'-3Hz','volume':'+8%'}
-}
 
-# Smooth-dubbing controls: gentle fades remove clicks/cuts when speaker labels change.
-VOICE_FADE_IN_SECONDS = 0.045
-VOICE_FADE_OUT_SECONDS = 0.070
-MIN_VOICE_GAP_MS = 12
-MAX_TEMPO_SPEED = 1.65
+# Four-tag voice system only. Rates are slightly quicker so long Khmer lines fit
+# naturally without aggressive FFmpeg stretching. Pitch stays near neutral to
+# avoid dry, thin or metallic speech.
+VOICE_PROFILES={
+    'M':{'voice':PISITH,'rate':'+2%','pitch':'-1Hz','volume':'+5%'},
+    'F':{'voice':SREYMOM,'rate':'+2%','pitch':'+0Hz','volume':'+5%'},
+    'M_THINK':{'voice':PISITH,'rate':'-1%','pitch':'-1Hz','volume':'+3%'},
+    'F_THINK':{'voice':SREYMOM,'rate':'-1%','pitch':'+0Hz','volume':'+3%'},
+}
+VALID_SPEAKER_TAGS={'M','F','M_THINK','F_THINK'}
+
+def normalize_speaker_tag(tag):
+    """Convert all legacy labels to the new four-tag system."""
+    value=str(tag or '').upper().strip().strip('[]')
+    female={'F','GIRL','F_YOUNG','F_ADULT','F_OLD','OLD_F','NARRATOR_F'}
+    male={'M','BOY','M_YOUNG','M_ADULT','M_OLD','OLD_M','NARRATOR_M'}
+    if value=='F_THINK': return 'F_THINK'
+    if value=='M_THINK': return 'M_THINK'
+    if value in female or value.startswith('F_'): return 'F'
+    if value in male or value.startswith('M_'): return 'M'
+    return 'M'
+
+# Longer soft fades and a small protected gap remove clicks and abrupt cuts.
+VOICE_FADE_IN_SECONDS = 0.060
+VOICE_FADE_OUT_SECONDS = 0.110
+MIN_VOICE_GAP_MS = 20
+MAX_TEMPO_SPEED = 1.45
 
 TRANSLATE_PROMPT = """You are an expert Khmer movie subtitler, Chinese-drama translator, dubbing script writer, and character-continuity editor.
 The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
@@ -434,7 +435,7 @@ Return a JSON array only. Each object must contain exactly:
 {"id": integer, "tag": string, "text": string}
 
 Allowed tags:
-BOY, GIRL, M_YOUNG, F_YOUNG, M_ADULT, F_ADULT, M_OLD, F_OLD, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
+M, F, M_THINK, F_THINK
 
 SPEAKER AND CHARACTER RULES:
 - Assign the tag to the person who is actually speaking, not merely the person visible on screen.
@@ -442,11 +443,10 @@ SPEAKER AND CHARACTER RULES:
 - Do not change meaning, pronouns, or speaker identity because a voice is louder, quieter, nearer, farther, muffled, or reverberant.
 - Keep each recurring character on a consistent gender/age/role tag across nearby cues. Never switch a character's label merely because the emotion, volume, camera angle, or speaking style changes.
 - Before assigning a new tag, compare with the preceding and following cues. Change the tag only when the actual speaker changes or clear video/audio evidence proves a different age/gender/role.
-- Use BOY/GIRL for children, M_YOUNG/F_YOUNG for teenagers or young adults, M_ADULT/F_ADULT for ordinary adults, and M_OLD/F_OLD for elderly speakers.
-- Choose age from the actual voice and visible character context; do not guess an elderly or child label from clothing alone.
-- Use M_THINK or F_THINK only for an unheard inner thought or internal monologue.
-- Use NARRATOR tags only for true off-screen narration, not for a character's thought.
-- Use BOY/GIRL and M_OLD/F_OLD only when age is clearly supported; otherwise prefer M_YOUNG/F_YOUNG or M_ADULT/F_ADULT.
+- Use M for every spoken male dialogue and F for every spoken female dialogue.
+- Use M_THINK or F_THINK only for unheard inner thoughts/internal monologue.
+- Narration that is audibly spoken uses M or F according to the narrator's gender.
+- Never output any tag other than M, F, M_THINK, F_THINK.
 
 PROFESSIONAL KHMER TRANSLATION RULES:
 - Translate into smooth, natural spoken Khmer that Cambodian people actually use in everyday conversation and movie dialogue.
@@ -523,15 +523,14 @@ Return a JSON array only with exactly:
 {"id": integer, "tag": string, "text": string}
 
 Allowed tags:
-BOY, GIRL, M_YOUNG, F_YOUNG, M_ADULT, F_ADULT, M_OLD, F_OLD, M_THINK, F_THINK, NARRATOR_M, NARRATOR_F
+M, F, M_THINK, F_THINK
 
 Rules:
 - Return exactly one object per cue ID in the same order.
 - Do not alter timestamps, cue count, or cue order.
 - Keep recurring character identity and tag consistent across nearby cues.
 - Ordinary audible dialogue must use the correct age-and-gender label, even when calm, soft, sad, angry, or whispering.
-- Use THINK only for unheard internal monologue; use NARRATOR only for true narration.
-- Use BOY/GIRL and M_OLD/F_OLD only when age is clearly supported; use M_YOUNG/F_YOUNG for young speakers and M_ADULT/F_ADULT for adults.
+- Use M_THINK/F_THINK only for unheard internal monologue. All audible narration/dialogue must use M or F. Never use another tag.
 - Rewrite Khmer into fluent, natural everyday Cambodian dialogue suitable for professional movie dubbing; never use stiff word-for-word or book-like phrasing.
 - Read each Khmer line as spoken dialogue: if a Cambodian would not normally say it that way, rewrite it using shorter and more familiar wording.
 - Respect each cue's MAX_WORDS strictly so dubbing can play at a normal pace.
@@ -1015,9 +1014,7 @@ def repair_translation_items(client, model_name, uploaded_video, cues, items):
                     continue
                 if cue_id not in by_id:
                     continue
-                tag = str(row.get("tag", "M")).upper().strip()
-                if tag not in VOICE_PROFILES:
-                    tag = items.get(cue_id, {}).get("tag", "M")
+                tag = normalize_speaker_tag(row.get("tag", items.get(cue_id, {}).get("tag", "M")))
                 dialogue = normalize_dialogue(row.get("text"))
                 if dialogue and not contains_cjk(dialogue):
                     items[cue_id] = {"tag": tag, "text": dialogue}
@@ -1053,9 +1050,7 @@ def refine_translated_cues(client, model_name, uploaded_video, cues, translated)
                 cue_id = int(item.get("id"))
             except (TypeError, ValueError, AttributeError):
                 continue
-            tag = str(item.get("tag", "M")).upper().strip()
-            if tag not in VOICE_PROFILES:
-                tag = translated.get(cue_id, {}).get("tag", "M")
+            tag = normalize_speaker_tag(item.get("tag", translated.get(cue_id, {}).get("tag", "M")))
             dialogue = str(item.get("text", "")).strip()
             if dialogue:
                 refined[cue_id] = {"tag": tag, "text": dialogue}
@@ -1114,9 +1109,7 @@ def translate_cues(client, model_name, uploaded_video, cues):
                 continue
             if cue_id not in {cue["id"] for cue in batch}:
                 continue
-            tag = str(item.get("tag", "M")).upper().strip()
-            if tag not in VOICE_PROFILES:
-                tag = "M_ADULT"
+            tag = normalize_speaker_tag(item.get("tag", "M"))
             translated = normalize_dialogue(item.get("text", ""))
             if translated:
                 result_by_id[cue_id] = {"tag": tag, "text": translated}
@@ -1317,9 +1310,8 @@ STRICT RULES:
 4. Do not omit short replies, names, numbers, negations, fillers, cries, or reactions.
 5. Output Khmer only in text. Do not leave Chinese, Thai, Vietnamese, or English dialogue.
 6. Keep each line concise enough for its timestamp, but preserve the full meaning.
-7. Select one tag: M_ADULT, F_ADULT, M_OLD, F_OLD, BOY, GIRL,
-   M_THINK, F_THINK, NARRATOR_M, NARRATOR_F.
-8. JSON format: [{{"id":1,"tag":"M_ADULT","text":"..."}}]
+7. Select exactly one tag: M, F, M_THINK, F_THINK.
+8. JSON format: [{{"id":1,"tag":"M","text":"..."}}]
 
 RECENT CONTEXT:
 {previous_context or '(none)'}
@@ -1338,9 +1330,8 @@ CUES:
             continue
         if cue_id not in allowed_ids:
             continue
-        tag = str(row.get("tag", "M_ADULT")).upper().strip()
-        if tag not in VOICE_PROFILES:
-            tag = "M_ADULT"
+        tag = normalize_speaker_tag(row.get("tag", "M"))
+        tag = normalize_speaker_tag(tag)
         dialogue = normalize_dialogue(row.get("text", ""))
         if dialogue and not contains_cjk(dialogue):
             parsed[cue_id] = {"tag": tag, "text": dialogue}
@@ -1472,9 +1463,7 @@ def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
                 cue_id = int(item.get("id"))
             except (TypeError, ValueError, AttributeError):
                 continue
-            tag = str(item.get("tag", "M")).upper().strip()
-            if tag not in VOICE_PROFILES:
-                tag = "M_ADULT"
+            tag = normalize_speaker_tag(item.get("tag", "M"))
             dialogue = str(item.get("text", "")).strip()
             if dialogue:
                 updated[cue_id] = {"tag": tag, "text": dialogue}
@@ -1489,23 +1478,29 @@ def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
     return "\n\n".join(blocks)
 
 def parse_srt(srt_text):
-    time_re=re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
-    tag_re=re.compile(r'^\[(BOY|GIRL|M_YOUNG|F_YOUNG|M_ADULT|F_ADULT|M_OLD|F_OLD|M_THINK|F_THINK|NARRATOR_M|NARRATOR_F|M|F|OLD_M|OLD_F)\]\s*',re.I)
+    time_re = re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
+    # Accept old labels for existing files, but immediately map them to 4 tags.
+    tag_re = re.compile(r'^\[([A-Z_]+)\]\s*', re.I)
     def to_ms(v):
         h,m,s,ms=map(int,v); return ((h*60+m)*60+s)*1000+ms
     cues=[]
-    for block in re.split(r'\n\s*\n',srt_text.strip()):
+    for block in re.split(r'\n\s*\n', str(srt_text or '').strip()):
         lines=[x.strip() for x in block.splitlines() if x.strip()]
         idx=next((i for i,x in enumerate(lines) if '-->' in x),None)
-        if idx is None or idx+1>=len(lines): continue
+        if idx is None or idx+1>=len(lines):
+            continue
         match=time_re.search(lines[idx])
-        if not match: continue
-        dialogue=' '.join(lines[idx+1:]).strip(); tag_match=tag_re.match(dialogue)
-        tag=tag_match.group(1).upper() if tag_match else 'M_ADULT'
-        if tag_match: dialogue=dialogue[tag_match.end():].strip()
+        if not match:
+            continue
+        dialogue=' '.join(lines[idx+1:]).strip()
+        tag_match=tag_re.match(dialogue)
+        tag=normalize_speaker_tag(tag_match.group(1) if tag_match else 'M')
+        if tag_match:
+            dialogue=dialogue[tag_match.end():].strip()
         if dialogue:
             start_ms=to_ms(match.groups()[:4]); end_ms=to_ms(match.groups()[4:])
-            if end_ms <= start_ms: end_ms = start_ms + 350
+            if end_ms <= start_ms:
+                end_ms = start_ms + 350
             cues.append({'start':start_ms,'end':end_ms,'tag':tag,'text':dialogue})
     return cues
 
@@ -1551,22 +1546,14 @@ async def synthesize(text, profile, output_path):
     raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
 
 def character_voice_filters(tag):
-    """Subtle per-role tone shaping so age/role labels do not all sound identical."""
+    """Gentle warmth only; avoid heavy EQ that makes Khmer voices dry."""
     mapping = {
-        'BOY': ['equalizer=f=180:t=q:w=1.0:g=-0.8', 'equalizer=f=2900:t=q:w=1.0:g=1.0'],
-        'GIRL': ['equalizer=f=180:t=q:w=1.0:g=-1.0', 'equalizer=f=3000:t=q:w=1.0:g=1.0'],
-        'M_YOUNG': ['equalizer=f=190:t=q:w=1.0:g=0.7', 'equalizer=f=2500:t=q:w=1.0:g=0.5'],
-        'F_YOUNG': ['equalizer=f=220:t=q:w=1.0:g=0.4', 'equalizer=f=2600:t=q:w=1.0:g=0.6'],
-        'M_ADULT': ['equalizer=f=170:t=q:w=1.0:g=1.6', 'equalizer=f=3200:t=q:w=1.0:g=-0.4'],
-        'F_ADULT': ['equalizer=f=220:t=q:w=1.0:g=0.9', 'equalizer=f=3000:t=q:w=1.0:g=0.2'],
-        'M_OLD': ['equalizer=f=140:t=q:w=1.0:g=2.2', 'equalizer=f=2600:t=q:w=1.0:g=-1.0', 'lowpass=f=7200:p=2'],
-        'F_OLD': ['equalizer=f=180:t=q:w=1.0:g=1.7', 'equalizer=f=2800:t=q:w=1.0:g=-0.8', 'lowpass=f=7400:p=2'],
-        'M_THINK': ['equalizer=f=180:t=q:w=1.0:g=1.2', 'equalizer=f=3500:t=q:w=1.0:g=-1.0', 'volume=0.96'],
-        'F_THINK': ['equalizer=f=220:t=q:w=1.0:g=0.8', 'equalizer=f=3600:t=q:w=1.0:g=-0.8', 'volume=0.96'],
-        'NARRATOR_M': ['equalizer=f=150:t=q:w=1.0:g=2.0', 'equalizer=f=2200:t=q:w=1.0:g=0.8'],
-        'NARRATOR_F': ['equalizer=f=200:t=q:w=1.0:g=1.3', 'equalizer=f=2300:t=q:w=1.0:g=0.7'],
+        'M': ['equalizer=f=190:t=q:w=1.0:g=0.8', 'equalizer=f=3000:t=q:w=1.0:g=0.2'],
+        'F': ['equalizer=f=230:t=q:w=1.0:g=0.5', 'equalizer=f=3200:t=q:w=1.0:g=0.2'],
+        'M_THINK': ['equalizer=f=200:t=q:w=1.0:g=0.5', 'equalizer=f=4200:t=q:w=1.0:g=-0.5', 'volume=0.97'],
+        'F_THINK': ['equalizer=f=240:t=q:w=1.0:g=0.4', 'equalizer=f=4400:t=q:w=1.0:g=-0.5', 'volume=0.97'],
     }
-    return mapping.get(tag, [])
+    return mapping.get(normalize_speaker_tag(tag), mapping['M'])
 
 
 def probe_audio_duration(path):
@@ -1631,7 +1618,7 @@ def create_mp3(srt_text, progress_callback=None):
 
         for index, cue in enumerate(cues):
             clip = root / f'clip_{index:04d}.mp3'
-            profile = VOICE_PROFILES.get(cue['tag'], VOICE_PROFILES['M_ADULT'])
+            profile = VOICE_PROFILES.get(normalize_speaker_tag(cue['tag']), VOICE_PROFILES['M'])
             run_async(synthesize(cue['text'], profile, clip))
             clips.append(clip)
             clip_durations.append(probe_audio_duration(clip))
@@ -1691,17 +1678,16 @@ def create_mp3(srt_text, progress_callback=None):
             # - keep Khmer consonants understandable
             # - use gentle compression only
             parts.extend([
-                'highpass=f=75:p=2',
-                'lowpass=f=7600:p=2',
-                'equalizer=f=180:t=q:w=1.0:g=1.2',
-                'equalizer=f=320:t=q:w=1.1:g=1.0',
-                'equalizer=f=1100:t=q:w=1.2:g=0.7',
-                'equalizer=f=2400:t=q:w=1.1:g=0.8',
-                'equalizer=f=4300:t=q:w=1.0:g=-1.8',
-                'equalizer=f=5800:t=q:w=0.9:g=-3.2',
-                'equalizer=f=7000:t=q:w=0.8:g=-3.8',
-                *character_voice_filters(cue.get('tag', 'M_ADULT')),
-                'acompressor=threshold=-23dB:ratio=2.0:attack=14:release=190:makeup=1.15:knee=4',
+                'highpass=f=65:p=2',
+                'lowpass=f=9200:p=2',
+                'equalizer=f=180:t=q:w=1.0:g=0.8',
+                'equalizer=f=350:t=q:w=1.1:g=0.5',
+                'equalizer=f=1200:t=q:w=1.2:g=0.3',
+                'equalizer=f=2800:t=q:w=1.1:g=0.3',
+                'equalizer=f=5200:t=q:w=1.0:g=-1.0',
+                'equalizer=f=7600:t=q:w=0.9:g=-1.2',
+                *character_voice_filters(normalize_speaker_tag(cue.get('tag', 'M'))),
+                'acompressor=threshold=-24dB:ratio=1.6:attack=22:release=240:makeup=1.08:knee=5',
                 f'atrim=0:{trim_seconds:.3f}',
                 'asetpts=PTS-STARTPTS',
                 f'afade=t=in:st=0:d={fade_in:.3f}',
@@ -1725,9 +1711,9 @@ def create_mp3(srt_text, progress_callback=None):
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'acompressor=threshold=-18dB:ratio=1.55:attack=18:release=240:makeup=1.0:knee=5,'
+              'acompressor=threshold=-19dB:ratio=1.35:attack=25:release=280:makeup=1.0:knee=6,'
               'alimiter=limit=0.94:attack=8:release=150,'
-              'loudnorm=I=-16:TP=-1.5:LRA=7,'
+              'loudnorm=I=-17:TP=-1.5:LRA=9,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
@@ -3029,8 +3015,7 @@ with tab_translate:
                     for item in parse_json_array(response.text or ""):
                         cue_id = int(item.get("id"))
                         tag = str(item.get("tag", "M")).upper()
-                        if tag not in VOICE_PROFILES:
-                            tag = "M_ADULT"
+                        tag = normalize_speaker_tag(tag)
                         translated_map[cue_id] = {"tag": tag, "text": str(item.get("text", "")).strip()}
                 blocks = []
                 for cue in source_cues:
@@ -3050,7 +3035,7 @@ with tab_translate:
 with tab_srt_speech:
     st.header("SRT → Speech")
     speech_srt = st.text_area(
-        "Khmer SRT with [BOY] [GIRL] [M_YOUNG] [F_YOUNG] [M_ADULT] [F_ADULT] [M_OLD] [F_OLD] [M_THINK] [F_THINK] [NARRATOR_M] [NARRATOR_F]",
+        "Khmer SRT with [M] [F] [M_THINK] [F_THINK]",
         height=360,
         key="speech_srt_input",
     )
@@ -3080,7 +3065,7 @@ with tab_text_speech:
     plain_text = st.text_area("Khmer Text", height=260, key="plain_text_input")
     voice_choice = st.selectbox(
         "Voice",
-        ["BOY", "GIRL", "M_YOUNG", "F_YOUNG", "M_ADULT", "F_ADULT", "M_OLD", "F_OLD", "M_THINK", "F_THINK", "NARRATOR_M", "NARRATOR_F"],
+        ["M", "F", "M_THINK", "F_THINK"],
         key="plain_voice",
     )
     if st.button("🔊 Generate Voice", key="plain_voice_btn"):
