@@ -417,22 +417,70 @@ VOICE_PROFILES={
 }
 VALID_SPEAKER_TAGS={'M','F','M_THINK','F_THINK'}
 
-def normalize_speaker_tag(tag):
-    """Convert all legacy labels to the new four-tag system."""
-    value=str(tag or '').upper().strip().strip('[]')
-    female={'F','GIRL','F_YOUNG','F_ADULT','F_OLD','OLD_F','NARRATOR_F'}
-    male={'M','BOY','M_YOUNG','M_ADULT','M_OLD','OLD_M','NARRATOR_M'}
-    if value=='F_THINK': return 'F_THINK'
-    if value=='M_THINK': return 'M_THINK'
-    if value in female or value.startswith('F_'): return 'F'
-    if value in male or value.startswith('M_'): return 'M'
-    return 'M'
+def normalize_speaker_tag(tag, fallback='M'):
+    """Normalize common AI/SRT labels into the only four supported voices."""
+    raw = str(tag or '').strip()
+    value = raw.upper().strip().strip('[]').replace('-', '_').replace(' ', '_')
+
+    aliases = {
+        'MALE': 'M', 'MAN': 'M', 'BOY': 'M', 'MEN': 'M',
+        'MALE_DIALOGUE': 'M', 'MAN_DIALOGUE': 'M', 'SPEAKER_M': 'M',
+        'ប្រុស': 'M', 'បុរស': 'M',
+        'FEMALE': 'F', 'WOMAN': 'F', 'GIRL': 'F', 'WOMEN': 'F',
+        'FEMALE_DIALOGUE': 'F', 'WOMAN_DIALOGUE': 'F', 'SPEAKER_F': 'F',
+        'ស្រី': 'F', 'ស្ត្រី': 'F',
+        'MALE_THINK': 'M_THINK', 'MALE_THOUGHT': 'M_THINK',
+        'MAN_THINK': 'M_THINK', 'M_THOUGHT': 'M_THINK',
+        'INNER_MALE': 'M_THINK', 'ប្រុសគិត': 'M_THINK',
+        'FEMALE_THINK': 'F_THINK', 'FEMALE_THOUGHT': 'F_THINK',
+        'WOMAN_THINK': 'F_THINK', 'F_THOUGHT': 'F_THINK',
+        'INNER_FEMALE': 'F_THINK', 'ស្រីគិត': 'F_THINK',
+    }
+    if value in VALID_SPEAKER_TAGS:
+        return value
+    if value in aliases:
+        return aliases[value]
+    if 'THINK' in value or 'THOUGHT' in value or 'INNER' in value:
+        return 'F_THINK' if value.startswith('F') or 'FEMALE' in value or 'WOMAN' in value else 'M_THINK'
+    if value.startswith('F') or 'FEMALE' in value or 'WOMAN' in value or 'GIRL' in value:
+        return 'F'
+    if value.startswith('M') or 'MALE' in value or 'MAN' in value or 'BOY' in value:
+        return 'M'
+    return fallback if fallback in VALID_SPEAKER_TAGS else 'M'
+
 
 # Longer soft fades and a small protected gap remove clicks and abrupt cuts.
 VOICE_FADE_IN_SECONDS = 0.010
 VOICE_FADE_OUT_SECONDS = 0.018
 MIN_VOICE_GAP_MS = 4
 MAX_TEMPO_SPEED = 1.65
+
+DETECT_TAG_PROMPT = """You are a precise audiovisual speaker-label detector for Chinese drama dubbing.
+
+Watch and listen to the supplied video around every timestamp. Determine WHO ACTUALLY SPEAKS and whether the voice is audible dialogue or an unheard inner thought.
+
+Return JSON array only:
+[{"id": integer, "tag": "M|F|M_THINK|F_THINK"}]
+
+Use exactly these four tags:
+M = an audible male voice
+F = an audible female voice
+M_THINK = a male character's unheard inner monologue
+F_THINK = a female character's unheard inner monologue
+
+STRICT DETECTION RULES:
+- Base gender primarily on the audible voice, lip movement, shot continuity, and recurring character identity.
+- Do not assign the visible person's gender when another off-screen person is speaking.
+- Whispered, distant, phone, memory, echo, narration-like, or off-screen AUDIBLE speech is still M or F.
+- Use THINK only when the scene clearly presents internal words that other characters cannot hear.
+- A close-up face alone does not prove THINK.
+- Do not infer a cue from the previous cue alone.
+- Track recurring speakers consistently through the batch.
+- For overlapping voices, tag the voice that owns the subtitle text.
+- Never translate or rewrite text.
+- Return exactly one object for every supplied ID, in the same order.
+- No markdown, comments, explanations, or extra keys.
+"""
 
 TRANSLATE_PROMPT = """You are AI KHEMRA BRO, an expert Khmer drama translator, subtitle editor, dubbing writer, and four-voice continuity editor.
 
@@ -1068,18 +1116,64 @@ def refine_translated_cues(client, model_name, uploaded_video, cues, translated)
                 cue_id = int(item.get("id"))
             except (TypeError, ValueError, AttributeError):
                 continue
-            tag = normalize_speaker_tag(item.get("tag", translated.get(cue_id, {}).get("tag", "M")))
+            locked_tag = translated.get(cue_id, {}).get("tag", "M")
             dialogue = str(item.get("text", "")).strip()
             if dialogue:
-                refined[cue_id] = {"tag": tag, "text": dialogue}
+                refined[cue_id] = {"tag": locked_tag, "text": dialogue}
 
     for cue in cues:
         refined.setdefault(cue["id"], translated[cue["id"]])
     return refined
 
 
+def detect_voice_tags(client, model_name, uploaded_video, cues):
+    """Detect the four voice labels in a separate audiovisual pass."""
+    detected = {}
+    batch_size = 30
+    previous_context = []
+
+    for offset in range(0, len(cues), batch_size):
+        batch = cues[offset:offset + batch_size]
+        payload = "\n".join(
+            f'ID={cue["id"]} | TIME={seconds_to_srt(cue["start"])} --> '
+            f'{seconds_to_srt(cue["end"])} | SOURCE={cue["source"]}'
+            for cue in batch
+        )
+        context = ""
+        if previous_context:
+            context = (
+                "\nRECENT CONFIRMED CONTINUITY (reference only):\n"
+                + "\n".join(previous_context[-8:])
+            )
+        prompt = DETECT_TAG_PROMPT + context + "\nCUES:\n" + payload
+        contents = [uploaded_video, prompt] if uploaded_video is not None else [prompt]
+        response = gemini_generate_with_retry(client, model_name, contents)
+
+        batch_ids = {cue["id"] for cue in batch}
+        for row in parse_json_array(response.text or ""):
+            try:
+                cue_id = int(row.get("id"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if cue_id not in batch_ids:
+                continue
+            detected[cue_id] = normalize_speaker_tag(row.get("tag"), fallback='M')
+
+        # Preserve sequence even if the model omitted an item.
+        for cue in batch:
+            if cue["id"] not in detected:
+                # Unknown is safer as audible dialogue than falsely marking THINK.
+                detected[cue["id"]] = 'M'
+            previous_context.append(
+                f'ID={cue["id"]} | TAG={detected[cue["id"]]} | SOURCE={cue["source"]}'
+            )
+
+    return detected
+
+
 def translate_cues(client, model_name, uploaded_video, cues):
-    """Translate in sequential batches while carrying recent character context."""
+    """Detect voice labels first, then translate while keeping those labels locked."""
+    locked_tags = detect_voice_tags(client, model_name, uploaded_video, cues)
     result_by_id = {}
     batch_size = 24
     context_size = 6
@@ -1092,14 +1186,14 @@ def translate_cues(client, model_name, uploaded_video, cues):
             translated = result_by_id.get(previous["id"])
             if translated:
                 previous_context.append(
-                    f'ID={previous["id"]} | TAG={translated["tag"]} '
+                    f'ID={previous["id"]} | LOCKED_TAG={translated["tag"]} '
                     f'| SOURCE={previous["source"]} | KHMER={translated["text"]}'
                 )
 
         cue_lines = "\n".join(
             f"ID={cue['id']} | {seconds_to_srt(cue['start'])} --> "
             f"{seconds_to_srt(cue['end'])} | MAX_WORDS={cue_word_limit(cue['start'], cue['end'])} "
-            f"| SOURCE={cue['source']}"
+            f"| LOCKED_TAG={locked_tags[cue['id']]} | SOURCE={cue['source']}"
             for cue in batch
         )
 
@@ -1112,29 +1206,37 @@ def translate_cues(client, model_name, uploaded_video, cues):
 
         prompt = (
             TRANSLATE_PROMPT
+            + "\nIMPORTANT: LOCKED_TAG was detected in a separate audiovisual pass. "
+              "Return that exact tag for each ID. Do not change gender or dialogue/thought mode."
             + context_block
             + "\n\nNEW CUES TO RETURN:\n"
             + cue_lines
         )
-        response = gemini_generate_with_retry(
-            client, model_name, [uploaded_video, prompt]
-        )
-        items = parse_json_array(response.text or "")
-        for item in items:
+        contents = [uploaded_video, prompt] if uploaded_video is not None else [prompt]
+        response = gemini_generate_with_retry(client, model_name, contents)
+        batch_ids = {cue["id"] for cue in batch}
+
+        for item in parse_json_array(response.text or ""):
             try:
                 cue_id = int(item.get("id"))
             except (TypeError, ValueError, AttributeError):
                 continue
-            if cue_id not in {cue["id"] for cue in batch}:
+            if cue_id not in batch_ids:
                 continue
-            tag = normalize_speaker_tag(item.get("tag", "M"))
             translated = normalize_dialogue(item.get("text", ""))
             if translated:
-                result_by_id[cue_id] = {"tag": tag, "text": translated}
+                result_by_id[cue_id] = {
+                    "tag": locked_tags[cue_id],
+                    "text": translated,
+                }
 
-    return repair_translation_items(
+    repaired = repair_translation_items(
         client, model_name, uploaded_video, cues, result_by_id
     )
+    # Repair translation text only; never allow retry output to overwrite labels.
+    for cue in cues:
+        repaired[cue["id"]]["tag"] = locked_tags[cue["id"]]
+    return repaired
 
 
 def build_srt(cues, translated):
