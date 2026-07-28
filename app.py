@@ -34,7 +34,7 @@ try:
 except Exception:
     imageio_ffmpeg = None
 
-APP_VERSION = "8.1"
+APP_VERSION = "9.0"
 
 
 
@@ -1363,11 +1363,9 @@ def _candidate_gemini_models(selected_model):
     """Return current stable Gemini Flash models in fast-first fallback order."""
     ordered = [
         str(selected_model or "").strip(),
-        "gemini-3.5-flash-lite",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.5-flash",
+        "gemini-flash-latest",
     ]
     result = []
     for name in ordered:
@@ -1761,6 +1759,17 @@ def create_mp3(srt_text, progress_callback=None):
     cues = parse_srt(srt_text)
     if not cues:
         raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
+
+    invalid_rows = [
+        index for index, cue in enumerate(cues, start=1)
+        if not is_valid_khmer_dialogue(cue.get("text", ""))
+    ]
+    if invalid_rows:
+        raise ValueError(
+            "SRT មិនទាន់ជាភាសាខ្មែរសុទ្ធនៅបន្ទាត់៖ "
+            + ", ".join(map(str, invalid_rows[:20]))
+            + "។ សូម Generate Khmer SRT ឡើងវិញ មុនបង្កើត MP3។"
+        )
 
     quality_issues = subtitle_quality_report(srt_text)
     severe_issues = [issue for issue in quality_issues if 'អក្សរចិន' in issue or 'timestamp មិនតាមលំដាប់' in issue]
@@ -2773,9 +2782,11 @@ if "api_keys_manager" not in st.session_state:
 for state_key, default_value in {
     "target_language": "Khmer (ខ្មែរ)",
     "translation_style": "🔴 Chinese Drama Pro",
-    "model_selector": "gemini-3.5-flash-lite",
+    "model_selector": "gemini-2.5-flash-lite",
     "lite_mode": True,
     "api_saved_notice": False,
+    "khmer_srt_ready": False,
+    "source_srt_text": "",
 }.items():
     if state_key not in st.session_state:
         st.session_state[state_key] = default_value
@@ -2805,9 +2816,8 @@ with st.container(key="api_menu_container"):
         st.selectbox(
             "🤖 Gemini Model",
             [
-                "gemini-3.5-flash-lite",
-                "gemini-3.6-flash",
-                "gemini-3.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-2.5-flash",
                 "gemini-flash-latest",
             ],
             key="model_selector",
@@ -2951,20 +2961,23 @@ with tab_video:
                                 generated_srt = future.result()
                             notice = "✅ Khmer SRT បានបង្កើតរួចរាល់។"
                         except Exception as translation_exc:
-                            # Never discard Whisper output when Gemini quota/key fails.
-                            generated_srt = source_srt
+                            # Keep the Chinese/source transcript separately. Never place it
+                            # in the Khmer editor, because that makes MP3 generation fail and
+                            # can be mistaken for a completed Khmer translation.
+                            generated_srt = ""
                             notice = (
-                                "⚠️ Whisper បានបង្កើត Source SRT រួច ប៉ុន្តែ Gemini មិនអាចបកប្រែបាន។ "
+                                "⚠️ Source SRT បានរក្សាទុករួច ប៉ុន្តែការបកប្រែទៅខ្មែរមិនទាន់ជោគជ័យ។ "
                                 + friendly_ai_error(translation_exc, len(valid_api_keys))
                             )
                     else:
-                        generated_srt = source_srt
-                        notice = "⚠️ បានបង្កើត Source SRT រួច។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។"
+                        generated_srt = ""
+                        notice = "⚠️ Source SRT បានរក្សាទុករួច។ សូមបញ្ចូល Gemini API Key ក្នុង ☰ Settings រួច Generate ម្តងទៀត។"
 
                     st.session_state.srt_text = generated_srt
                     st.session_state.main_srt_editor = generated_srt
                     st.session_state.pending_srt = ""
                     st.session_state.audio_bytes = None
+                    st.session_state.khmer_srt_ready = bool(generated_srt.strip())
                     st.session_state.workflow_notice = notice
                     progress_bar.progress(100)
                     time.sleep(0.25)
@@ -2986,7 +2999,17 @@ with tab_video:
             st.success(workflow_notice)
         else:
             st.warning(workflow_notice)
-    st.caption("SRT នឹងចូលប្រអប់នេះដោយស្វ័យប្រវត្តិ ពេលដំណើរការដល់ 100%។ អ្នកអាចកែបានមុន Generate MP3។")
+    st.caption("SRT ខ្មែរនឹងចូលប្រអប់នេះដោយស្វ័យប្រវត្តិ បន្ទាប់ពីការបកប្រែបានជោគជ័យ។ អ្នកអាចកែបានមុន Generate MP3។")
+
+    if st.session_state.get("source_srt_text") and not st.session_state.get("khmer_srt_ready"):
+        st.download_button(
+            "⬇️ ទាញ Source SRT (ភាសាដើម)",
+            ("\ufeff" + st.session_state.source_srt_text).encode("utf-8"),
+            f"{safe_download_stem(st.session_state.get('source_video_stem'), 'source')}_source.srt",
+            "application/x-subrip",
+            use_container_width=True,
+            key="download_source_srt_after_failure",
+        )
 
     pending_editor_update = st.session_state.pop("pending_editor_update", None)
     if pending_editor_update is not None:
@@ -3003,6 +3026,10 @@ with tab_video:
         key="main_srt_editor",
     )
     st.session_state.srt_text = st.session_state.main_srt_editor
+    parsed_editor_cues = parse_srt(st.session_state.srt_text)
+    st.session_state.khmer_srt_ready = bool(parsed_editor_cues) and all(
+        is_valid_khmer_dialogue(cue.get("text", "")) for cue in parsed_editor_cues
+    )
 
     # Keep both SRT action buttons on one row directly below the editor,
     # including portrait and landscape mobile screens.
@@ -3069,7 +3096,9 @@ with tab_video:
 
         if generate_clicked:
             if not st.session_state.srt_text.strip():
-                st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
+                st.warning("សូម Generate Khmer SRT ឱ្យបានជោគជ័យ ឬបញ្ចូល Khmer SRT ជាមុន។")
+            elif not st.session_state.get("khmer_srt_ready", False):
+                st.error("SRT នេះមិនទាន់ជាភាសាខ្មែរសុទ្ធទេ។ MP3 មិនត្រូវបានបង្កើត ដើម្បីជៀសវាងសំឡេងខូច។")
             else:
                 progress_bar = st.progress(0)
                 progress_text = st.empty()
