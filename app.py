@@ -406,10 +406,14 @@ SREYMOM='km-KH-SreymomNeural'
 # Normal dialogue stays neutral and stable. Inner-thought voices are deliberately
 # softer, slower and slightly lighter so they are clearly different.
 VOICE_PROFILES={
-    'M':{'voice':PISITH,'rate':'+0%','pitch':'+0Hz','volume':'+0%'},
-    'F':{'voice':SREYMOM,'rate':'+0%','pitch':'+0Hz','volume':'+0%'},
-    'M_THINK':{'voice':PISITH,'rate':'-14%','pitch':'+10Hz','volume':'-18%'},
-    'F_THINK':{'voice':SREYMOM,'rate':'-14%','pitch':'+12Hz','volume':'-18%'},
+    # Clear, modern dialogue. A slight positive rate reduces forced cutting.
+    'M':{'voice':PISITH,'rate':'+3%','pitch':'-1Hz','volume':'+4%'},
+    'F':{'voice':SREYMOM,'rate':'+3%','pitch':'+0Hz','volume':'+4%'},
+
+    # Inner thought stays clearly different but remains natural and intelligible.
+    # The larger difference comes from tone/space filters, not an artificial pitch.
+    'M_THINK':{'voice':PISITH,'rate':'-5%','pitch':'-2Hz','volume':'-7%'},
+    'F_THINK':{'voice':SREYMOM,'rate':'-5%','pitch':'-1Hz','volume':'-7%'},
 }
 VALID_SPEAKER_TAGS={'M','F','M_THINK','F_THINK'}
 
@@ -425,10 +429,10 @@ def normalize_speaker_tag(tag):
     return 'M'
 
 # Longer soft fades and a small protected gap remove clicks and abrupt cuts.
-VOICE_FADE_IN_SECONDS = 0.060
-VOICE_FADE_OUT_SECONDS = 0.110
-MIN_VOICE_GAP_MS = 20
-MAX_TEMPO_SPEED = 1.25
+VOICE_FADE_IN_SECONDS = 0.018
+VOICE_FADE_OUT_SECONDS = 0.035
+MIN_VOICE_GAP_MS = 8
+MAX_TEMPO_SPEED = 1.50
 
 TRANSLATE_PROMPT = """You are an expert Khmer movie subtitler, Chinese-drama translator, dubbing script writer, and character-continuity editor.
 The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
@@ -1552,31 +1556,33 @@ async def synthesize(text, profile, output_path):
     raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
 
 def character_voice_filters(tag):
-    """Stable per-tag tone and loudness; inner thoughts are light and soft."""
+    """Consistent dialogue level and a natural cinematic inner-thought tone."""
     mapping = {
         'M': [
-            'equalizer=f=180:t=q:w=1.0:g=0.7',
-            'equalizer=f=3200:t=q:w=1.0:g=0.1',
-            'volume=1.00',
+            'equalizer=f=190:t=q:w=1.0:g=0.5',
+            'equalizer=f=3000:t=q:w=1.0:g=0.7',
+            'volume=1.03',
         ],
         'F': [
-            'equalizer=f=230:t=q:w=1.0:g=0.5',
-            'equalizer=f=3400:t=q:w=1.0:g=0.1',
-            'volume=1.00',
+            'equalizer=f=240:t=q:w=1.0:g=0.4',
+            'equalizer=f=3300:t=q:w=1.0:g=0.7',
+            'volume=1.03',
         ],
         'M_THINK': [
-            'highpass=f=95:p=2',
-            'equalizer=f=220:t=q:w=1.0:g=-0.4',
-            'equalizer=f=1800:t=q:w=1.0:g=0.5',
-            'equalizer=f=5200:t=q:w=1.0:g=-1.5',
-            'volume=0.82',
+            'highpass=f=80:p=2',
+            'lowpass=f=7200:p=2',
+            'equalizer=f=220:t=q:w=1.0:g=0.8',
+            'equalizer=f=2600:t=q:w=1.0:g=-0.4',
+            'aecho=0.82:0.20:42:0.075',
+            'volume=0.90',
         ],
         'F_THINK': [
-            'highpass=f=105:p=2',
-            'equalizer=f=260:t=q:w=1.0:g=-0.3',
-            'equalizer=f=2000:t=q:w=1.0:g=0.5',
-            'equalizer=f=5400:t=q:w=1.0:g=-1.5',
-            'volume=0.82',
+            'highpass=f=85:p=2',
+            'lowpass=f=7400:p=2',
+            'equalizer=f=260:t=q:w=1.0:g=0.6',
+            'equalizer=f=2900:t=q:w=1.0:g=-0.3',
+            'aecho=0.82:0.20:42:0.075',
+            'volume=0.90',
         ],
     }
     return mapping.get(normalize_speaker_tag(tag), mapping['M'])
@@ -1729,8 +1735,8 @@ def create_mp3(srt_text, progress_callback=None):
             rendered_seconds = audio_seconds / safe_speed
             trim_seconds = min(rendered_seconds, slot_seconds)
 
-            fade_in = min(VOICE_FADE_IN_SECONDS, max(0.015, trim_seconds * 0.10))
-            fade_out = min(VOICE_FADE_OUT_SECONDS, max(0.025, trim_seconds * 0.14))
+            fade_in = min(VOICE_FADE_IN_SECONDS, max(0.008, trim_seconds * 0.025))
+            fade_out = min(VOICE_FADE_OUT_SECONDS, max(0.015, trim_seconds * 0.045))
             fade_out_start = max(0.01, trim_seconds - fade_out)
 
             label = f'a{index}'
@@ -1744,15 +1750,14 @@ def create_mp3(srt_text, progress_callback=None):
             # - use gentle compression only
             parts.extend([
                 'highpass=f=65:p=2',
-                'lowpass=f=8200:p=2',
-                'equalizer=f=180:t=q:w=1.0:g=0.8',
-                'equalizer=f=350:t=q:w=1.1:g=0.5',
-                'equalizer=f=1200:t=q:w=1.2:g=0.3',
-                'equalizer=f=2800:t=q:w=1.1:g=0.3',
-                'equalizer=f=5200:t=q:w=1.0:g=-1.5',
-                'equalizer=f=7400:t=q:w=0.9:g=-1.8',
+                'lowpass=f=10000:p=2',
+                'equalizer=f=180:t=q:w=1.0:g=0.5',
+                'equalizer=f=900:t=q:w=1.1:g=0.2',
+                'equalizer=f=3000:t=q:w=1.0:g=0.8',
+                'equalizer=f=6500:t=q:w=1.0:g=-0.7',
                 *character_voice_filters(normalize_speaker_tag(cue.get('tag', 'M'))),
-                'acompressor=threshold=-23dB:ratio=1.45:attack=28:release=300:makeup=1.02:knee=6',
+                'dynaudnorm=f=250:g=7:p=0.90:m=5:s=5',
+                'acompressor=threshold=-22dB:ratio=1.35:attack=22:release=220:makeup=1.03:knee=5',
                 f'atrim=0:{trim_seconds:.3f}',
                 'asetpts=PTS-STARTPTS',
                 f'afade=t=in:st=0:d={fade_in:.3f}',
@@ -1776,9 +1781,9 @@ def create_mp3(srt_text, progress_callback=None):
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'acompressor=threshold=-18dB:ratio=1.25:attack=30:release=320:makeup=1.0:knee=7,'
-              'alimiter=limit=0.94:attack=8:release=150,'
-              'loudnorm=I=-18:TP=-2.0:LRA=7,'
+              'acompressor=threshold=-18dB:ratio=1.22:attack=28:release=260:makeup=1.0:knee=6,'
+              'alimiter=limit=0.95:attack=7:release=120,'
+              'loudnorm=I=-16:TP=-1.5:LRA=6,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
@@ -1788,8 +1793,8 @@ def create_mp3(srt_text, progress_callback=None):
             '-map', '[out]',
             '-c:a', 'libmp3lame',
             '-ac', '1',
-            '-ar', '44100',
-            '-b:a', '160k',
+            '-ar', '48000',
+            '-b:a', '192k',
             str(output),
         ])
 
