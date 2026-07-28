@@ -8,3 +8,11 @@ Main fix: Gemini model compatibility for Video → Whisper → Khmer SRT → MP3
 - MP3 generation requires valid Khmer subtitle text.
 
 Deploy by replacing `app.py`, keeping `requirements.txt` and `packages.txt`, then redeploying the service.
+
+
+## 6.3 Four-Voice Smooth Audio Fix
+- Uses only [M], [F], [M_THINK], [F_THINK].
+- Legacy tags are automatically mapped to the four supported tags.
+- Softer neutral pitch and gentler EQ/compression.
+- Longer fades and protected cue gaps reduce clicks and abrupt cuts.
+- Translation prompt enforces natural spoken Khmer and locked timestamps.
