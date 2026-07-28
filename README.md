@@ -1,7 +1,43 @@
-ការបំបែកស្រទាប់ទិន្នន័យច្បាស់លាស់៖ ប្រសិនបើការបកប្រែជួបបញ្ហា កម្មវិធីនឹងមិនយកអត្ថបទចិន (Chinese/Source SRT) ទៅដាក់ជំនួសក្នុងប្រអប់កែសម្រួល Khmer SRT ឡើយ ដោយរក្សាទុក និងផ្ដល់ប៊ូតុងទាញយក Source SRT ដាច់ដោយឡែក។
+# AI KHEMRA BRO v7.3 — Khmer-Only + Faster Processing
 
-ការទប់ស្កាត់ការបង្កើត MP3 ខូច៖ កម្មវិធីនឹងឆែកមើលតួអក្សរ និងភាសាយ៉ាងម៉ត់ចត់ (មិនឱ្យមានលាយឡំអក្សរចិន ឡាតាំង ឬថៃ) មុនពេលអនុញ្ញាតឱ្យបង្កើតឯកសារសំឡេង MP3 ដើម្បីការពារបញ្ហាសំឡេងអានចេញមកខូច។
+Use exactly four files in the GitHub repository root:
 
-ការកែតម្រូវម៉ូឌែល Gemini៖ កូដបានកំណត់ឈ្មោះម៉ូឌែលត្រឹមត្រូវតាមស្ដង់ដារគឺ gemini-2.5-flash-lite, gemini-2.5-flash និង gemini-flash-latest ព្រមទាំងមានប្រព័ន្ធបម្រុង (Fallback) ទៅកាន់ Google Translate ក្នុងករណីគណនីមានបញ្ហា Quota។
+- app.py
+- requirements.txt
+- packages.txt
+- README.md
 
-ប្រសិនបើអ្នកត្រូវការឱ្យខ្ញុំជួយរៀបចំ ឬពិនិត្យមើលឯកសារផ្សេងទៀតដូចជា requirements.txt, packages.txt ឬ README.md បន្ថែមទៀត ដើម្បីឱ្យស្របគ្នាទៅនឹងការអាប់ដេតថ្មីនេះ សូមប្រាប់ខ្ញុំបានគ្រប់ពេល។
+## Fixed
+
+- Rejects Thai subtitles completely.
+- Rejects Chinese, Vietnamese, English, and Latin-letter dialogue.
+- Requires real Cambodian Khmer Unicode before SRT can be generated.
+- Automatically retries only the incorrect subtitle lines.
+- Prevents wrong-language text from being placed in the final SRT.
+- Reduces Whisper CPU processing time by using beam_size=5 and best_of=3.
+- Keeps FFmpeg and clear-audio fixes from v7.2.
+
+## Install
+
+Replace the old four files in GitHub, then:
+
+Streamlit → Manage app → Reboot app
+
+After reboot, upload the video again and press Generate Khmer SRT.
+
+## Version 7.6 update
+- Gemini structured JSON subtitle output
+- 10-line translation chunks with 1:1 ID preservation
+- automatic API-key and Gemini model fallback
+- targeted retry for missing subtitle lines
+- optional deep-translator fallback when Gemini quota is exhausted
+- Khmer-only validation; Chinese source text is never copied into final Khmer SRT
+- speaker-tag voice profiles and updated MP3 cleanup filter
+
+
+## Version 8.1 changes
+- Gemini first, automatic Google Translate fallback.
+- Only four SRT voice tags: `[M]`, `[F]`, `[M_THINK]`, `[F_THINK]`.
+- Removed Gemini response-schema fields that caused HTTP 400 errors.
+- Blocks Chinese/Thai text before MP3 generation.
+- License database initialization and `st.rerun()` session cleanup retained.
