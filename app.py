@@ -411,9 +411,9 @@ VOICE_PROFILES={
     # Sreymom: female dialogue
     'F':{'voice':SREYMOM,'rate':'+1%','pitch':'+0Hz','volume':'+2%'},
     # Piseth: male inner thought
-    'M_THINK':{'voice':PISITH,'rate':'-4%','pitch':'-3Hz','volume':'-5%'},
+    'M_THINK':{'voice':PISITH,'rate':'-6%','pitch':'-4Hz','volume':'-9%'},
     # Sreymom: female inner thought
-    'F_THINK':{'voice':SREYMOM,'rate':'-4%','pitch':'-2Hz','volume':'-5%'},
+    'F_THINK':{'voice':SREYMOM,'rate':'-6%','pitch':'-3Hz','volume':'-9%'},
 }
 VALID_SPEAKER_TAGS={'M','F','M_THINK','F_THINK'}
 
