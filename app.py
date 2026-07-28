@@ -3,6 +3,7 @@ import base64
 import datetime
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -33,7 +34,7 @@ try:
 except Exception:
     imageio_ffmpeg = None
 
-APP_VERSION = "7.8"
+APP_VERSION = "8.1"
 
 
 
@@ -471,12 +472,10 @@ html, body, [data-testid="stAppViewContainer"], .stApp{
 PISITH='km-KH-PisethNeural'
 SREYMOM='km-KH-SreymomNeural'
 VOICE_PROFILES={
-    # Only four supported labels. Keeping this list small prevents label drift
-    # between Gemini, SRT parsing, and Edge TTS.
     'M':       {'voice': PISITH,  'rate': '-2%', 'pitch': '+0Hz', 'volume': '+6%'},
     'F':       {'voice': SREYMOM, 'rate': '-2%', 'pitch': '+0Hz', 'volume': '+6%'},
-    'M_THINK': {'voice': PISITH,  'rate': '-6%', 'pitch': '+0Hz', 'volume': '+4%'},
-    'F_THINK': {'voice': SREYMOM, 'rate': '-6%', 'pitch': '+0Hz', 'volume': '+4%'},
+    'M_THINK': {'voice': PISITH,  'rate': '-5%', 'pitch': '+0Hz', 'volume': '+5%'},
+    'F_THINK': {'voice': SREYMOM, 'rate': '-5%', 'pitch': '+0Hz', 'volume': '+5%'},
 }
 
 # Smooth-dubbing controls: gentle fades remove clicks/cuts when speaker labels change.
@@ -485,38 +484,117 @@ VOICE_FADE_OUT_SECONDS = 0.095
 MIN_VOICE_GAP_MS = 6
 MAX_TEMPO_SPEED = 1.92
 
-TRANSLATE_PROMPT = """You are an expert Chinese-drama to Khmer subtitle translator and dubbing editor.
+TRANSLATE_PROMPT = """You are an expert Khmer movie subtitler, Chinese-drama translator, dubbing script writer, and character-continuity editor.
 The supplied cue IDs and Whisper timestamps are authoritative and MUST NOT be changed.
-Return a JSON array only. Every object must contain exactly:
+Use the uploaded video to identify the actual speaker, voice source, age, gender, social rank, relationship, narration, and inner thought.
+
+Return a JSON array only. Each object must contain exactly:
 {"id": integer, "tag": string, "text": string}
 
-ALLOWED TAGS — USE ONLY THESE FOUR:
+Allowed tags:
 M, F, M_THINK, F_THINK
 
-TAG RULES:
-- M: spoken dialogue by a male character.
-- F: spoken dialogue by a female character.
-- M_THINK: an unheard inner thought/internal monologue by a male character.
-- F_THINK: an unheard inner thought/internal monologue by a female character.
-- Narration, children, elderly characters, shouting, whispering, distance, and emotion do NOT create new labels. Use M or F unless it is clearly an inner thought.
-- Never output BOY, GIRL, M_ADULT, F_ADULT, M_OLD, F_OLD, NARRATOR_M, NARRATOR_F, or any other tag.
+SPEAKER RULES:
+- Use M for spoken male dialogue.
+- Use F for spoken female dialogue.
+- Use M_THINK only for unheard male inner thought.
+- Use F_THINK only for unheard female inner thought.
+- Use exactly one of these four tags for every cue.
+- Keep the same recurring character gender across nearby cues.
+- Do not invent child, elderly, narrator, or age-specific tags.
 
-KHMER RULES:
-- Translate every audible idea into smooth, natural spoken Khmer.
-- Keep strict 1:1 cue mapping. Never merge, split, omit, reorder, or invent cue IDs.
-- Preserve meaning, names, numbers, negations, fillers, reactions, emotion, rank, and relationships.
-- Use clean Facebook-safe Khmer while keeping the original intention.
-- The text field must contain Khmer dialogue only: no Chinese characters, pinyin, Thai, Vietnamese, English explanations, markdown, XML, or speaker brackets.
-- Keep wording short enough for the supplied timestamp, but never replace a failed translation with the original Chinese source.
-- Before returning JSON, verify every requested ID exists, every tag is one of the four allowed tags, and every text value contains Khmer characters.
+PROFESSIONAL KHMER TRANSLATION RULES:
+- Translate into smooth, natural spoken Khmer that Cambodian people actually use in everyday conversation and movie dialogue.
+- Never translate word-for-word. First understand the whole meaning, situation, relationship, and emotion, then rewrite it naturally in Khmer.
+- Avoid formal, book-like, bureaucratic, robotic, dry, or machine-translated Khmer unless the character and scene truly require formal speech.
+- Prefer short, familiar, easy-to-understand Khmer expressions. The sentence should sound natural when spoken aloud, not merely look grammatically correct in writing.
+- Preserve the original meaning, intention, emotion, humor, threat, sarcasm, romance, fear, grief, status, and relationship.
+- You may reorder wording inside the same cue and replace unnatural literal phrases with familiar Khmer speech, but you MUST preserve every audible idea, response, interjection, negation, name, number, command, and emotional particle. Never invent information or change the meaning.
+- Do NOT delete short words, filler sounds, reactions, repeated words, names, negations, or tiny replies when they are audible in the source. Translate natural reactions such as 嗯, 啊, 哦, 喂, 哎, 好, 不, 是, 什么 into suitable spoken Khmer such as អឺ, អា៎, អូ, ហេ៎, អុញ, បាន, ទេ, មែន, អី—according to context.
+- Use conversational sentence order and natural responses such as “អញ្ចឹងមែន?”, “បានហើយ”, “មិនអីទេ”, “តើមានរឿងអី?”, or similar only when they accurately match the source meaning and scene.
+- Choose pronouns and forms of address that fit age, gender, rank, relationship, and scene context, such as: បង/អូន, ខ្ញុំ/លោក, ឯង/អញ, ពួកម៉ាក, សម្លាញ់, លោកគ្រូ, សិស្ស, ព្រះអង្គ, អធិរាជ, ម្ចាស់, មេទ័ព, លោកតា, លោកយាយ.
+- Use natural Khmer emotion particles only when suitable, for example: ណា, ណ៎, ចា៎, ចុះ, អញ្ចឹង, ហ្នឹង, មែនទេ, វើយ, ហ្មង, ហាស, អូហ៍.
+- FACEBOOK-SAFE LANGUAGE MODE IS ALWAYS ON: do not output profanity, obscene expressions, sexual insults, degrading slurs, hateful language, direct humiliation, or unnecessarily graphic wording.
+- When the source contains rude or offensive speech, keep the intention and emotion but replace it with a clean, natural Khmer expression suitable for a general Facebook audience. For example, use context-appropriate clean phrases such as «មនុស្សអាក្រក់», «ឈប់និយាយទៅ», «កុំធ្វើបែបនេះ», «គួរឱ្យខឹងមែន», or «ចេញទៅ» instead of reproducing vulgar wording.
+- Do not sanitize so aggressively that the plot meaning disappears. Preserve whether the speaker is angry, threatening, mocking, shocked, or rejecting someone, but express it without offensive vocabulary.
+- Never create insults that were not present in the source. Never target protected characteristics, disability, appearance, family members, or private sexual matters.
+- Do not overuse slang, insults, or particles. Match the actor's personality and the scene while keeping the wording clean enough for a broad Facebook audience.
+- For historical, cultivation, martial-arts, palace, fantasy, or modern-drama terms, choose Khmer wording that viewers understand while keeping names and ranks consistent.
+- If a source phrase contains an idiom, joke, hidden meaning, or wordplay, recreate the intended effect naturally in Khmer instead of translating the literal words.
+- Do not leave Chinese characters, pinyin, English explanation, translator notes, or brackets inside the Khmer dialogue.
+
+EMOTION AND DUBBING RULES:
+- Write each line so that Khmer AI speech sounds smooth, emotional, and easy to pronounce.
+- Use punctuation naturally to guide pauses, breathing, and rising/falling intonation, but avoid excessive punctuation.
+- End questions with ? and emotional exclamations with ! only when justified; use Khmer commas or ellipses sparingly for gentle pauses so TTS does not sound flat or abruptly cut.
+- Make angry lines firm, sad lines gentle, romantic lines warm, fearful lines urgent, and comic lines lively.
+- Avoid awkward repeated words, robotic phrasing, and long formal constructions.
+
+KHMER DUBBING QUALITY RULES:
+- Translate as if you are writing dialogue for a professional Khmer TV dubbing studio.
+- Every sentence must sound like a real Cambodian person speaking naturally.
+- Prefer intended meaning and emotion over literal wording.
+- Rewrite sentence structure whenever necessary so it flows naturally in Khmer.
+- Keep emotion and character continuity flowing from one subtitle to the next.
+- Never produce robotic, dry, textbook, or machine-translated Khmer.
+- Use familiar daily Khmer expressions only when they fit the character and situation.
+- If the source is emotional, make the Khmer line emotionally convincing without changing its meaning.
+- Avoid repeating the same words in consecutive subtitles unless the repetition is intentional.
+- If a direct translation sounds unnatural, reshape it into natural Khmer conversation.
+- Make every subtitle easy for Khmer AI voices to pronounce with natural rhythm and breathing.
+- Keep each cue compact enough to be spoken without rushing or being cut. Prefer concise natural Khmer over long literal wording.
+- In rapid multi-speaker scenes, preserve the exact meaning but shorten syntax, remove only redundant wording, and keep every negation, name, number, command, and meaningful reaction.
+- Avoid punctuation patterns that make TTS jump in pitch. Use one clear punctuation mark at the end and only essential internal pauses.
+- The final dialogue should sound as if it was originally written and performed in Khmer.
+- Before returning each subtitle, silently ask: “Would a Cambodian naturally say this in a real conversation or movie?” If not, rewrite it.
+
+STRICT TIMING AND SUBTITLE LENGTH RULES:
+- The supplied start and end timestamp of every cue is locked. Never move dialogue earlier or later, never borrow time from another cue, and never merge or split cues.
+- Each cue includes MAX_WORDS. The Khmer text MUST stay at or below that word limit so the generated voice can finish inside its own timestamp.
+- Start speaking at the cue start and finish before the cue end. Do not let one character's voice overlap the next cue unless the original timestamps themselves overlap.
+- Shorten only by choosing concise natural Khmer wording; never delete a meaning-bearing word, negation, name, number, command, response, or audible reaction.
+- Cut and reshape the translation so it fits the subtitle time and can be spoken comfortably before the cue ends.
+- Prefer one short, clear, natural spoken sentence per cue.
+- Keep the complete meaning and emotional force. Never remove an audible word merely because it is short, repeated, a filler, a reaction, or difficult to fit. Use concise Khmer wording while preserving it.
+- Do not make a line unnaturally incomplete merely to shorten it; choose a shorter natural Khmer expression instead.
+- Never merge, split, omit, summarize away, or renumber cues. Every supplied cue must contain spoken Khmer text unless the source cue is truly silent/non-speech.
+
+MANDATORY NO-SKIP RULES:
+- Translate 100% of the audible speech in every cue, including one-word replies and tiny sounds.
+- Never return an empty text value for a cue containing speech.
+- Preserve negatives such as “not/no/don’t”, names, numbers, titles, greetings, calls, sighs, surprise, agreement, disagreement, and repeated emphasis.
+- Do not summarize two clauses into one if that removes information.
+- If the source is very short, return a correspondingly short Khmer utterance rather than deleting it.
+- Recheck each cue against SOURCE before output: every audible element must be represented in Khmer.
+- Final safety check for every cue: remove or rewrite any vulgar, obscene, hateful, sexually insulting, or degrading word into clean natural Khmer while preserving the scene's meaning and emotion.
+- Final timing check for every cue: wording must be speakable within that cue's exact duration without rushing, dragging, starting early, or finishing late.
+
+OUTPUT RULES:
+- Return exactly one object for every supplied cue ID, in the same order.
+- Every text value must be fluent Khmer suitable for professional movie subtitles and dubbing.
+- JSON only. No markdown fences, headings, comments, or explanation.
 """
 
-ANALYZE_PROMPT = """Review the Khmer subtitle cues for speaker continuity and dubbing clarity.
-Return JSON only with exactly one object per requested ID:
+ANALYZE_PROMPT = """You are a Chinese-drama Khmer dubbing continuity editor.
+Review the supplied fixed-timestamp cues using the video context.
+Return a JSON array only with exactly:
 {"id": integer, "tag": string, "text": string}
-Use only M, F, M_THINK, F_THINK.
-Keep every ID and timestamp mapping unchanged. Keep natural Khmer only and remove all Chinese or Latin dialogue.
-Do not create narrator, child, adult, young, or elderly labels. Ordinary spoken lines use M or F; unheard inner thoughts use M_THINK or F_THINK.
+
+Allowed tags:
+M, F, M_THINK, F_THINK
+
+Rules:
+- Return exactly one object per cue ID in the same order.
+- Do not alter timestamps, cue count, or cue order.
+- Keep recurring character identity and tag consistent across nearby cues.
+- Ordinary audible dialogue must use the correct age-and-gender label, even when calm, soft, sad, angry, or whispering.
+- Use M_THINK or F_THINK only for unheard internal monologue.
+- Use only M, F, M_THINK, or F_THINK. Never output age-specific or narrator tags.
+- Rewrite Khmer into fluent, natural everyday Cambodian dialogue suitable for professional movie dubbing; never use stiff word-for-word or book-like phrasing.
+- Read each Khmer line as spoken dialogue: if a Cambodian would not normally say it that way, rewrite it using shorter and more familiar wording.
+- Respect each cue's MAX_WORDS strictly so dubbing can play at a normal pace.
+- Preserve every spoken meaning, including short replies, particles, hesitation sounds, repeated words, names, negations, and small expressions. Never delete a cue or omit a spoken word merely to shorten it; shorten only by natural Khmer rephrasing without information loss.
+- JSON only. No explanations or markdown.
 """
 
 API_COOKIE_NAME = "ai_khemra_bro_private_api"
@@ -904,7 +982,6 @@ def upload_for_context(client, video_path):
 
 
 def parse_json_array(raw_text):
-    import json
     cleaned = (raw_text or "").strip()
     cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned, flags=re.I)
     cleaned = re.sub(r"\\s*```$", "", cleaned)
@@ -1141,7 +1218,7 @@ def build_srt(cues, translated):
         blocks.append(
             f'{cue["id"]}\n'
             f'{seconds_to_srt(cue["start"])} --> {seconds_to_srt(cue["end"])}\n'
-            f'[{normalize_speaker_tag(item.get("tag"))}] {item["text"]}'
+            f'[{normalize_speaker_tag(item["tag"])}] {item["text"]}'
         )
     return "\n\n".join(blocks)
 
@@ -1195,8 +1272,7 @@ def video_to_srt(video_path, api_keys, model):
     if isinstance(api_keys, str):
         api_keys = [api_keys]
     api_keys = [str(key).strip() for key in api_keys if str(key).strip()]
-    if not api_keys:
-        raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
+    # Gemini is optional: Google Translate remains available as a fallback.
 
     with tempfile.TemporaryDirectory() as folder:
         folder_path = Path(folder)
@@ -1287,6 +1363,9 @@ def _candidate_gemini_models(selected_model):
     """Return current stable Gemini Flash models in fast-first fallback order."""
     ordered = [
         str(selected_model or "").strip(),
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.5-flash",
     ]
@@ -1298,7 +1377,7 @@ def _candidate_gemini_models(selected_model):
     return result
 
 def _translate_batch_text_only(client, model_name, batch, previous_context=""):
-    """Translate one small batch without SDK response_schema incompatibilities."""
+    """Translate one small batch with Gemini structured JSON output."""
     cue_lines = "\n".join(
         f'ID={cue["id"]} | TIME={seconds_to_srt(cue["start"])} --> '
         f'{seconds_to_srt(cue["end"])} | SOURCE={cue["source"]}'
@@ -1306,17 +1385,16 @@ def _translate_batch_text_only(client, model_name, batch, previous_context=""):
     )
     prompt = f"""
 You are a professional Khmer subtitle translator for Chinese dramas.
-Translate every SOURCE value into natural spoken Cambodian Khmer.
+Translate every SOURCE value into natural spoken Khmer.
 
 STRICT RULES:
-1. Return one valid JSON array and nothing else.
-2. Return EXACTLY {len(batch)} objects, one object for every input ID.
-3. Every object must be: {{"id": integer, "tag": "M|F|M_THINK|F_THINK", "text": "Khmer only"}}.
-4. Keep strict 1:1 mapping; never merge, split, omit, reorder, or invent an ID.
-5. Keep each ID unchanged. Preserve names, numbers, negations, fillers, cries, and reactions.
-6. Use ONLY these four tags: M, F, M_THINK, F_THINK.
-7. The text field must contain Khmer script only. Never copy Chinese source text.
-8. Do not use markdown fences, comments, or extra keys.
+1. Return EXACTLY {len(batch)} objects, one object for every input ID.
+2. Keep strict 1:1 mapping; never merge, split, omit, reorder, or invent an ID.
+3. Keep each ID unchanged. Translate only the SOURCE meaning.
+4. Preserve names, numbers, negations, fillers, cries, emotional reactions, and context.
+5. The text field must contain natural Cambodian Khmer only. No Chinese, Thai, Vietnamese, English, pinyin, or Latin dialogue.
+6. Choose exactly one speaker tag from: M, F, M_THINK, F_THINK.
+7. Return JSON only, following the required schema.
 
 RECENT CONTEXT:
 {previous_context or '(none)'}
@@ -1325,8 +1403,6 @@ CUES:
 {cue_lines}
 """.strip()
 
-    # Deliberately avoid response_schema. Some google-genai/API combinations
-    # serialize JSON-schema keywords into unsupported fields and return 400.
     response = client.models.generate_content(
         model=model_name,
         contents=[prompt],
@@ -1336,7 +1412,7 @@ CUES:
         ),
     )
     rows = parse_json_array(response.text or "")
-    allowed_ids = {cue["id"] for cue in batch}
+    allowed_ids = [cue["id"] for cue in batch]
     parsed = {}
     for row in rows:
         try:
@@ -1350,6 +1426,7 @@ CUES:
         if is_valid_khmer_dialogue(dialogue):
             parsed[cue_id] = {"tag": tag, "text": dialogue}
     return parsed
+
 
 def _google_translate_fallback(cues, target_lang="km"):
     """Last-resort line-by-line fallback. Never copies Chinese source into Khmer SRT."""
@@ -1378,7 +1455,7 @@ def _merge_missing_translations(base, extra):
 
 
 def translate_cues_text_only(client, model_name, cues):
-    """Translate safely in small chunks; quota errors fall back immediately."""
+    """Translate in 10-line chunks with validation, targeted retries, and pacing."""
     translated = {}
     batch_size = 10
     for offset in range(0, len(cues), batch_size):
@@ -1391,57 +1468,47 @@ def translate_cues_text_only(client, model_name, cues):
                     f'ID={cue["id"]} TAG={item["tag"]} SOURCE={cue["source"]} KHMER={item["text"]}'
                 )
 
-        parsed = {}
         last_error = None
-        for attempt in range(2):
+        parsed = {}
+        for attempt in range(3):
             try:
                 parsed = _translate_batch_text_only(
                     client, model_name, batch, "\n".join(context_rows)
                 )
                 missing = [cue for cue in batch if cue["id"] not in parsed]
-                if missing:
-                    repaired = _translate_batch_text_only(
-                        client,
-                        model_name,
-                        missing,
-                        "Previous output missed these lines. Return every ID in Khmer only.",
-                    )
-                    _merge_missing_translations(parsed, repaired)
+                if not missing:
+                    break
+                # Retry only missing lines; never fill them with original Chinese text.
+                repaired = _translate_batch_text_only(
+                    client,
+                    model_name,
+                    missing,
+                    "Previous output missed lines. Return every requested ID in Khmer only.",
+                )
+                _merge_missing_translations(parsed, repaired)
                 if all(cue["id"] in parsed for cue in batch):
                     break
             except Exception as exc:
                 last_error = exc
-                if is_quota_error(exc):
-                    break
-                if attempt == 1:
-                    break
-                time.sleep(1.5)
+                if not is_quota_error(exc) and attempt == 2:
+                    raise
+                time.sleep(min(12.0, 2.0 * (2 ** attempt)))
 
-        missing = [cue for cue in batch if cue["id"] not in parsed]
-        if missing:
-            # Use Google Translate only for the missing batch. This prevents a
-            # Gemini 429 from returning Chinese text to the Khmer editor.
-            try:
-                fallback = _google_translate_fallback(missing)
-                _merge_missing_translations(parsed, fallback)
-            except Exception as fallback_exc:
-                if last_error is not None:
-                    raise RuntimeError(
-                        friendly_ai_error(last_error, 1)
-                        + f" ប្រព័ន្ធបម្រុងមិនអាចបកប្រែបាន៖ {fallback_exc}"
-                    ) from fallback_exc
-                raise
-
-        still_missing = [cue["id"] for cue in batch if cue["id"] not in parsed]
-        if still_missing:
-            raise RuntimeError(
-                "មិនអាចបង្កើតអក្សរខ្មែរគ្រប់បន្ទាត់បាន៖ "
-                + ", ".join(map(str, still_missing))
-            )
         translated.update(parsed)
+        missing = [cue for cue in batch if cue["id"] not in translated]
+        if missing:
+            if last_error:
+                raise last_error
+            raise RuntimeError(
+                "AI មិនបានត្រឡប់បន្ទាត់ SRT គ្រប់គ្រាន់៖ "
+                + ", ".join(str(cue["id"]) for cue in missing)
+            )
+
+        # Gentle pacing protects per-minute request limits without making the app too slow.
         if offset + batch_size < len(cues):
-            time.sleep(0.35)
+            time.sleep(1.0)
     return translated
+
 
 def video_to_srt(video_path, api_keys, model, prepared_cues=None):
     """FFmpeg -> Whisper -> Gemini key/model rotation -> optional Google fallback."""
@@ -1489,7 +1556,7 @@ def video_to_srt(video_path, api_keys, model, prepared_cues=None):
                 raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
 
     # Last-resort service: preserve all cue IDs/timestamps, but speaker tags default
-    # to M because Google Translate cannot reliably infer speakers.
+    # to M_ADULT because Google Translate cannot reliably infer speakers.
     try:
         translated = _google_translate_fallback(cues)
         return build_srt(cues, translated)
@@ -1557,26 +1624,27 @@ def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
         item = updated.get(cue["id"], {"tag": cue["tag"], "text": cue["text"]})
         blocks.append(
             f'{cue["id"]}\n{ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])}\n'
-            f'[{normalize_speaker_tag(item.get("tag"))}] {item["text"]}'
+            f'[{normalize_speaker_tag(item["tag"])}] {item["text"]}'
         )
     return "\n\n".join(blocks)
 
 TAG_ALIASES = {
-    # Read old projects safely, but always convert them to the four new labels.
-    'MALE': 'M', 'MAN': 'M', 'BOY': 'M', 'M_YOUNG': 'M', 'M_ADULT': 'M',
-    'M_OLD': 'M', 'OLD_M': 'M', 'NARRATOR_M': 'M',
-    'FEMALE': 'F', 'WOMAN': 'F', 'GIRL': 'F', 'F_YOUNG': 'F', 'F_ADULT': 'F',
-    'F_OLD': 'F', 'OLD_F': 'F', 'NARRATOR_F': 'F',
+    'MALE': 'M', 'MAN': 'M', 'BOY': 'M', 'M_YOUNG': 'M', 'M_OLD': 'M',
+    'OLD_M': 'M', 'NARRATOR_M': 'M',
+    'FEMALE': 'F', 'WOMAN': 'F', 'GIRL': 'F', 'F_YOUNG': 'F', 'F_OLD': 'F',
+    'OLD_F': 'F', 'NARRATOR_F': 'F',
+    'M_THOUGHT': 'M_THINK', 'F_THOUGHT': 'F_THINK',
 }
+
 
 VALID_SPEAKER_TAGS = set(VOICE_PROFILES)
 
 
 def normalize_speaker_tag(tag):
-    """Return exactly one of M, F, M_THINK, or F_THINK."""
+    """Return one canonical speaker tag without inventing age or gender."""
     value = str(tag or 'M').upper().strip()
     value = TAG_ALIASES.get(value, value)
-    return value if value in VALID_SPEAKER_TAGS else 'M' 
+    return value if value in VALID_SPEAKER_TAGS else 'M'
 
 
 def subtitle_quality_report(srt_text):
@@ -1605,7 +1673,7 @@ def subtitle_quality_report(srt_text):
 
 def parse_srt(srt_text):
     time_re=re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
-    tag_re=re.compile(r'^\[(M_THINK|F_THINK|M|F)\]\s*', re.I)
+    tag_re=re.compile(r'^\[(M|F|M_THINK|F_THINK|BOY|GIRL|M_YOUNG|F_YOUNG|M_OLD|F_OLD|NARRATOR_M|NARRATOR_F|OLD_M|OLD_F)\]\s*',re.I)
     def to_ms(v):
         h,m,s,ms=map(int,v); return ((h*60+m)*60+s)*1000+ms
     cues=[]
@@ -1666,42 +1734,20 @@ async def synthesize(text, profile, output_path):
     raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
 
 def character_voice_filters(tag):
-    """Gentle tone shaping for the four supported voice modes."""
-    mapping = {
-        'M': ['equalizer=f=170:t=q:w=1.0:g=1.4', 'equalizer=f=3200:t=q:w=1.0:g=-0.4'],
-        'F': ['equalizer=f=220:t=q:w=1.0:g=0.8', 'equalizer=f=3000:t=q:w=1.0:g=0.2'],
-        'M_THINK': ['equalizer=f=180:t=q:w=1.0:g=1.0', 'equalizer=f=3500:t=q:w=1.0:g=-1.0', 'volume=0.96'],
-        'F_THINK': ['equalizer=f=220:t=q:w=1.0:g=0.7', 'equalizer=f=3600:t=q:w=1.0:g=-0.8', 'volume=0.96'],
+    """Small EQ differences for the four supported voice modes."""
+    canonical = normalize_speaker_tag(tag)
+    filters = {
+        'M': ['equalizer=f=150:t=q:w=1.0:g=1.2'],
+        'F': ['equalizer=f=220:t=q:w=1.0:g=0.8'],
+        'M_THINK': ['equalizer=f=180:t=q:w=1.0:g=1.0', 'volume=0.96'],
+        'F_THINK': ['equalizer=f=240:t=q:w=1.0:g=0.7', 'volume=0.96'],
     }
-    return mapping.get(normalize_speaker_tag(tag), mapping['M'])
-
-
-def probe_audio_duration(path):
-    """Read duration with FFmpeg itself, avoiding a separate ffprobe dependency."""
-    result = run_ffmpeg(["-hide_banner", "-i", str(path)], timeout=30)
-    output = (result.stderr or "") + "\n" + (result.stdout or "")
-    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
-    if not match:
-        raise RuntimeError("មិនអាចអានរយៈពេលសំឡេងបានទេ។")
-    hours, minutes, seconds = match.groups()
-    return max(0.01, int(hours) * 3600 + int(minutes) * 60 + float(seconds))
-
-
-def atempo_chain(speed):
-    """Build a valid FFmpeg atempo chain for speed factors above 1."""
-    factors = []
-    remaining = max(1.0, float(speed))
-    while remaining > 2.0:
-        factors.append(2.0)
-        remaining /= 2.0
-    if remaining > 1.001:
-        factors.append(remaining)
-    return ",".join(f"atempo={value:.5f}" for value in factors)
+    return filters.get(canonical, filters['M'])
 
 
 def create_mp3(srt_text, progress_callback=None):
     if contains_cjk(srt_text) or contains_thai(srt_text):
-        raise ValueError("SRT នៅមានអក្សរចិន/ថៃ។ សូមបកប្រែជាខ្មែរមុនបង្កើត MP3។")
+        raise ValueError("SRT នៅមានអក្សរចិន ឬថៃ។ សូមបកប្រែជាខ្មែរមុនបង្កើត MP3។")
     """
     Create one synchronized Khmer MP3.
 
@@ -1739,7 +1785,7 @@ def create_mp3(srt_text, progress_callback=None):
 
         for index, cue in enumerate(cues):
             clip = root / f'clip_{index:04d}.mp3'
-            profile = VOICE_PROFILES[normalize_speaker_tag(cue.get('tag'))]
+            profile = VOICE_PROFILES.get(cue['tag'], VOICE_PROFILES['M'])
             run_async(synthesize(cue['text'], profile, clip))
             clips.append(clip)
             clip_durations.append(probe_audio_duration(clip))
@@ -2905,17 +2951,15 @@ with tab_video:
                                 generated_srt = future.result()
                             notice = "✅ Khmer SRT បានបង្កើតរួចរាល់។"
                         except Exception as translation_exc:
-                            # Keep source transcription internally for recovery, but never
-                            # place Chinese text in the Khmer editor or send it to Edge TTS.
-                            generated_srt = ""
+                            # Never discard Whisper output when Gemini quota/key fails.
+                            generated_srt = source_srt
                             notice = (
-                                "⚠️ មិនទាន់អាចបង្កើត Khmer SRT បានទេ។ "
+                                "⚠️ Whisper បានបង្កើត Source SRT រួច ប៉ុន្តែ Gemini មិនអាចបកប្រែបាន។ "
                                 + friendly_ai_error(translation_exc, len(valid_api_keys))
-                                + " Source SRT ត្រូវបានរក្សាទុកខាងក្នុង មិនត្រូវបានផ្ញើទៅ MP3 ទេ។"
                             )
                     else:
-                        generated_srt = ""
-                        notice = "⚠️ Source SRT បានបង្កើត និងរក្សាទុកខាងក្នុង។ សូមដាក់ Gemini API Key ដើម្បីទទួល Khmer SRT; អក្សរចិនមិនត្រូវបានផ្ញើទៅ MP3 ទេ។"
+                        generated_srt = source_srt
+                        notice = "⚠️ បានបង្កើត Source SRT រួច។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។"
 
                     st.session_state.srt_text = generated_srt
                     st.session_state.main_srt_editor = generated_srt
@@ -3115,39 +3159,24 @@ with tab_translate:
     if st.button("🌐 Translate to Khmer", key="translate_btn"):
         if not source_srt.strip():
             st.warning("សូមបញ្ចូល Chinese SRT។")
-        elif not api_key:
-            st.error("សូមចុចប៊ូតុង ☰ បញ្ចូល API Key ហើយចុច «រក្សាទុក»។")
         else:
             try:
                 source_cues = srt_to_structured_cues(source_srt)
                 if not source_cues:
                     raise ValueError("Chinese SRT មិនត្រឹមត្រូវ។")
-                client = genai.Client(api_key=api_key)
-                translated_map = {}
-                for offset in range(0, len(source_cues), 35):
-                    batch = source_cues[offset:offset + 35]
-                    payload = "\n".join(
-                        f'ID={cue["id"]} | SOURCE={cue["text"]}' for cue in batch
-                    )
-                    response = gemini_generate_with_retry(
-                        client, model, TRANSLATE_PROMPT + "\n\nCUES:\n" + payload
-                    )
-                    for item in parse_json_array(response.text or ""):
-                        cue_id = int(item.get("id"))
-                        tag = str(item.get("tag", "M")).upper()
-                        if tag not in VOICE_PROFILES:
-                            tag = "M"
-                        translated_map[cue_id] = {"tag": tag, "text": str(item.get("text", "")).strip()}
-                blocks = []
-                for cue in source_cues:
-                    item = translated_map.get(cue["id"])
-                    if not item or not item["text"]:
-                        raise RuntimeError(f'បកប្រែមិនអស់បន្ទាត់ {cue["id"]}')
-                    blocks.append(
-                        f'{cue["id"]}\n{ms_to_srt(cue["start_ms"])} --> {ms_to_srt(cue["end_ms"])}\n'
-                        f'[{normalize_speaker_tag(item.get("tag"))}] {item["text"]}'
-                    )
-                st.session_state.srt_text = "\n\n".join(blocks)
+                translated_map = None
+                gemini_error = None
+                if api_key:
+                    try:
+                        client = genai.Client(api_key=api_key)
+                        translated_map = translate_cues_text_only(client, model, source_cues)
+                    except Exception as exc:
+                        gemini_error = exc
+                if translated_map is None:
+                    translated_map = _google_translate_fallback(source_cues)
+                    if gemini_error is not None:
+                        st.info("Gemini មិនអាចប្រើបាន។ បានប្តូរទៅ Google Translate ដោយស្វ័យប្រវត្តិ។")
+                st.session_state.srt_text = build_srt(source_cues, translated_map)
                 st.session_state.pending_editor_update = st.session_state.srt_text
                 st.success("✅ បកប្រែរួចរាល់ និងរក្សា Timestamp ដើម។")
             except Exception as exc:
