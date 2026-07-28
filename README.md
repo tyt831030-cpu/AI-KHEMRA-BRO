@@ -1,35 +1,31 @@
-# AI KHEMRA BRO v7.3 — Khmer-Only + Faster Processing
+AI KHEMRA BRO — Version 7.7
 
-Use exactly four files in the GitHub repository root:
+Supported SRT voice tags
 
-- app.py
-- requirements.txt
-- packages.txt
-- README.md
+The application now outputs and uses only these four labels:
 
-## Fixed
+• [M] — male dialogue
+• [F] — female dialogue
+• [M_THINK] — male inner thought
+• [F_THINK] — female inner thought
 
-- Rejects Thai subtitles completely.
-- Rejects Chinese, Vietnamese, English, and Latin-letter dialogue.
-- Requires real Cambodian Khmer Unicode before SRT can be generated.
-- Automatically retries only the incorrect subtitle lines.
-- Prevents wrong-language text from being placed in the final SRT.
-- Reduces Whisper CPU processing time by using beam_size=5 and best_of=3.
-- Keeps FFmpeg and clear-audio fixes from v7.2.
+Old labels are accepted only when opening an older SRT project. They are automatically converted to one of the four supported labels before dubbing.
 
-## Install
+Main fixes
 
-Replace the old four files in GitHub, then:
+• Removed the unsupported Gemini JSON Schema field additionalProperties that caused 400 INVALID_ARGUMENT.
+• Restricted Gemini prompts and schema output to four tags only.
+• Added Khmer validation so Chinese or Latin dialogue cannot silently pass into the final Khmer SRT.
+• Google Translate fallback now produces [M] when Gemini is unavailable; it never copies the original Chinese line into the Khmer SRT.
+• Edge TTS now maps every accepted cue to one of the four voice profiles before generating audio.
+• Text-to-Speech and SRT-to-Speech menus now show only the four supported labels.
 
-Streamlit → Manage app → Reboot app
+Deployment files
 
-After reboot, upload the video again and press Generate Khmer SRT.
+Use:
 
-## Version 7.6 update
-- Gemini structured JSON subtitle output
-- 10-line translation chunks with 1:1 ID preservation
-- automatic API-key and Gemini model fallback
-- targeted retry for missing subtitle lines
-- optional deep-translator fallback when Gemini quota is exhausted
-- Khmer-only validation; Chinese source text is never copied into final Khmer SRT
-- speaker-tag voice profiles and updated MP3 cleanup filter
+• app.py
+• requirements.txt
+• packages.txt
+
+The existing dependency lists remain compatible.
