@@ -1,17 +1,10 @@
-# AI KHEMRA BRO v6.3 — Unlocked Fix
+# AI KHEMRA BRO v6.2
 
-## ការកែសំខាន់
-- ដោះ Customer Access Code / Login Lock ចេញ។
-- កម្មវិធីអាចបើកចូលផ្ទាល់បាន។
-- Gemini API Key ត្រូវការតែពេលប្រើ AI បកប្រែប៉ុណ្ណោះ។
-- API Key អាចបញ្ចូលក្នុងប៊ូតុង ☰ ហើយរក្សាទុកបាន។
-- SRT ថ្មីប្រើតែ `[M]`, `[F]`, `[M_THINK]`, `[F_THINK]`។
-- កំណត់ Gemini model លំនាំដើមជា `gemini-flash-latest` ដើម្បីកាត់បន្ថយកំហុស model 404។
+Main fix: Gemini model compatibility for Video → Whisper → Khmer SRT → MP3.
 
-## Run
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
+- Defaults to `gemini-3.5-flash-lite`.
+- Automatic fallback to other supported Flash models.
+- Keeps Chinese source transcription separate from Khmer SRT.
+- MP3 generation requires valid Khmer subtitle text.
 
-Railway/Nixpacks ត្រូវមាន FFmpeg តាម `packages.txt`។
+Deploy by replacing `app.py`, keeping `requirements.txt` and `packages.txt`, then redeploying the service.
