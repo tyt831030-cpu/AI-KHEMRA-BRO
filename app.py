@@ -3,6 +3,8 @@ import base64
 import datetime
 import hashlib
 import hmac
+import json
+import os
 import re
 import secrets
 import sqlite3
@@ -21,7 +23,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "6.3"
+APP_VERSION = "6.3.3"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -409,13 +411,13 @@ VOICE_PROFILES={
 'F_ADULT':{'voice':SREYMOM,'rate':'-2%','pitch':'-1Hz','volume':'+7%'},
 'M_OLD':{'voice':PISITH,'rate':'-11%','pitch':'-8Hz','volume':'+8%'},
 'F_OLD':{'voice':SREYMOM,'rate':'-10%','pitch':'-6Hz','volume':'+8%'},
-'M_THINK':{'voice':PISITH,'rate':'-7%','pitch':'-4Hz','volume':'+5%'},
-'F_THINK':{'voice':SREYMOM,'rate':'-7%','pitch':'-3Hz','volume':'+5%'},
+'M_THINK':{'voice':PISITH,'rate':'-5%','pitch':'-3Hz','volume':'+9%'},
+'F_THINK':{'voice':SREYMOM,'rate':'-5%','pitch':'-2Hz','volume':'+9%'},
 'NARRATOR_M':{'voice':PISITH,'rate':'-7%','pitch':'-6Hz','volume':'+8%'},
 'NARRATOR_F':{'voice':SREYMOM,'rate':'-6%','pitch':'-4Hz','volume':'+8%'},
 # Backward-compatible labels for older SRT files.
-'M':{'voice':PISITH,'rate':'-3%','pitch':'-2Hz','volume':'+7%'},
-'F':{'voice':SREYMOM,'rate':'-3%','pitch':'-1Hz','volume':'+7%'},
+'M':{'voice':PISITH,'rate':'-2%','pitch':'-2Hz','volume':'+10%'},
+'F':{'voice':SREYMOM,'rate':'-2%','pitch':'-1Hz','volume':'+10%'},
 'OLD_M':{'voice':PISITH,'rate':'-8%','pitch':'-5Hz','volume':'+8%'},
 'OLD_F':{'voice':SREYMOM,'rate':'-8%','pitch':'-3Hz','volume':'+8%'}
 }
@@ -502,6 +504,44 @@ Check every cue carefully:
 - Never alter IDs or timestamps; never merge, split, omit, or invent cues.
 - Do not leave Chinese characters, English explanations, notes, markdown, or tags inside the text value.
 """
+
+API_COOKIE_NAME = "ai_khemra_bro_private_api"
+COOKIE_SECRET_CONFIGURED = False
+
+def _load_or_create_local_secret():
+    """Create a unique local fallback instead of shipping a public hard-coded key."""
+    secret_path = Path(__file__).with_name(".cookie_secret")
+    try:
+        if secret_path.exists():
+            value = secret_path.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+        value = secrets.token_urlsafe(48)
+        secret_path.write_text(value, encoding="utf-8")
+        return value
+    except OSError:
+        # Last-resort process secret. Cookies may reset after a restart, but data is not
+        # encrypted with a key that is publicly embedded in the source code.
+        return secrets.token_urlsafe(48)
+
+try:
+    raw_cookie_secret = str(st.secrets.get("COOKIE_SECRET", "")).strip()
+except Exception:
+    raw_cookie_secret = ""
+if not raw_cookie_secret:
+    raw_cookie_secret = os.getenv("COOKIE_SECRET", "").strip()
+
+if raw_cookie_secret:
+    COOKIE_SECRET_CONFIGURED = True
+else:
+    raw_cookie_secret = _load_or_create_local_secret()
+
+fernet_key = base64.urlsafe_b64encode(
+    hashlib.sha256(raw_cookie_secret.encode("utf-8")).digest()
+)
+api_cipher = Fernet(fernet_key)
+cookie_manager = stx.CookieManager(key="ai_khemra_private_cookie_manager")
+
 
 def encrypt_api_keys(api_keys_text):
     cleaned = "\n".join(
@@ -1117,70 +1157,6 @@ def friendly_ai_error(exc, key_count=1):
     return f"AI មិនអាចបញ្ចប់ការបកប្រែបាន៖ {message[:420]}"
 
 
-def video_to_srt(video_path, api_keys, model):
-    """
-    Whisper creates timestamps once.
-    Gemini keys rotate automatically when a key has quota/rate-limit problems.
-    The normal path uses one translation pass plus targeted repair only,
-    reducing Gemini requests compared with the previous three-pass workflow.
-    """
-    if isinstance(api_keys, str):
-        api_keys = [api_keys]
-    api_keys = [str(key).strip() for key in api_keys if str(key).strip()]
-    if not api_keys:
-        raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
-
-    with tempfile.TemporaryDirectory() as folder:
-        folder_path = Path(folder)
-        proxy_path = folder_path / "video_proxy_480p.mp4"
-        audio_path = folder_path / "audio_16k.flac"
-
-        # Convert the large MP4 into a small processing copy. The original file
-        # is used only as a fallback when FFmpeg cannot create the proxy.
-        processing_video = Path(video_path)
-        try:
-            processing_video = optimize_video_for_processing(video_path, proxy_path)
-        except Exception:
-            processing_video = Path(video_path)
-
-        extract_audio(processing_video, audio_path)
-        cues = transcribe_with_whisper(audio_path)
-        if not cues:
-            raise RuntimeError("Whisper មិនរកឃើញសំឡេងនិយាយក្នុងវីដេអូនេះទេ។")
-
-        last_error = None
-
-        for api_key in api_keys:
-            try:
-                client = genai.Client(api_key=api_key)
-                uploaded_video = upload_for_context(client, processing_video)
-
-                # One main translation pass. translate_cues already repairs
-                # missing/Chinese cues, so the old extra full refinement pass
-                # is skipped to conserve free-tier requests.
-                translated = translate_cues(
-                    client, model, uploaded_video, cues
-                )
-                translated = repair_translation_items(
-                    client, model, uploaded_video, cues, translated
-                )
-
-                result = build_srt(cues, translated)
-                if "-->" not in result:
-                    raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
-                return result
-
-            except Exception as exc:
-                last_error = exc
-                if is_quota_error(exc) or is_invalid_key_error(exc):
-                    # Try the next API key saved by this user.
-                    continue
-                raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
-
-        raise RuntimeError(friendly_ai_error(last_error, len(api_keys)))
-
-
-
 # ---------------------------------------------------------------------------
 # v5.5 resilient SRT workflow
 # ---------------------------------------------------------------------------
@@ -1498,8 +1474,10 @@ def character_voice_filters(tag):
         'F_ADULT': ['equalizer=f=220:t=q:w=1.0:g=0.9', 'equalizer=f=3000:t=q:w=1.0:g=0.2'],
         'M_OLD': ['equalizer=f=140:t=q:w=1.0:g=2.2', 'equalizer=f=2600:t=q:w=1.0:g=-1.0', 'lowpass=f=7200:p=2'],
         'F_OLD': ['equalizer=f=180:t=q:w=1.0:g=1.7', 'equalizer=f=2800:t=q:w=1.0:g=-0.8', 'lowpass=f=7400:p=2'],
-        'M_THINK': ['equalizer=f=180:t=q:w=1.0:g=1.2', 'equalizer=f=3500:t=q:w=1.0:g=-1.0', 'volume=0.96'],
-        'F_THINK': ['equalizer=f=220:t=q:w=1.0:g=0.8', 'equalizer=f=3600:t=q:w=1.0:g=-0.8', 'volume=0.96'],
+        'M': ['equalizer=f=170:t=q:w=1.0:g=1.4', 'equalizer=f=2400:t=q:w=1.0:g=1.2', 'equalizer=f=4200:t=q:w=1.0:g=0.5'],
+        'F': ['equalizer=f=220:t=q:w=1.0:g=0.9', 'equalizer=f=2700:t=q:w=1.0:g=1.3', 'equalizer=f=4500:t=q:w=1.0:g=0.4'],
+        'M_THINK': ['equalizer=f=180:t=q:w=1.0:g=1.0', 'equalizer=f=2400:t=q:w=1.0:g=0.9', 'equalizer=f=4300:t=q:w=1.0:g=-0.4', 'volume=1.02'],
+        'F_THINK': ['equalizer=f=220:t=q:w=1.0:g=0.7', 'equalizer=f=2700:t=q:w=1.0:g=1.0', 'equalizer=f=4500:t=q:w=1.0:g=-0.3', 'volume=1.02'],
         'NARRATOR_M': ['equalizer=f=150:t=q:w=1.0:g=2.0', 'equalizer=f=2200:t=q:w=1.0:g=0.8'],
         'NARRATOR_F': ['equalizer=f=200:t=q:w=1.0:g=1.3', 'equalizer=f=2300:t=q:w=1.0:g=0.7'],
     }
@@ -1629,14 +1607,14 @@ def create_mp3(srt_text, progress_callback=None):
             # - use gentle compression only
             parts.extend([
                 'highpass=f=75:p=2',
-                'lowpass=f=7600:p=2',
+                'lowpass=f=9000:p=2',
                 'equalizer=f=180:t=q:w=1.0:g=1.2',
                 'equalizer=f=320:t=q:w=1.1:g=1.0',
                 'equalizer=f=1100:t=q:w=1.2:g=0.7',
                 'equalizer=f=2400:t=q:w=1.1:g=0.8',
-                'equalizer=f=4300:t=q:w=1.0:g=-1.8',
-                'equalizer=f=5800:t=q:w=0.9:g=-3.2',
-                'equalizer=f=7000:t=q:w=0.8:g=-3.8',
+                'equalizer=f=4300:t=q:w=1.0:g=-0.8',
+                'equalizer=f=5800:t=q:w=0.9:g=-1.6',
+                'equalizer=f=7000:t=q:w=0.8:g=-2.0',
                 *character_voice_filters(cue.get('tag', 'M_ADULT')),
                 'acompressor=threshold=-23dB:ratio=2.0:attack=14:release=190:makeup=1.15:knee=4',
                 f'atrim=0:{trim_seconds:.3f}',
@@ -1664,7 +1642,7 @@ def create_mp3(srt_text, progress_callback=None):
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
               'acompressor=threshold=-18dB:ratio=1.55:attack=18:release=240:makeup=1.0:knee=5,'
               'alimiter=limit=0.94:attack=8:release=150,'
-              'loudnorm=I=-16:TP=-1.5:LRA=7,'
+              'loudnorm=I=-15:TP=-1.2:LRA=6,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
@@ -1724,10 +1702,15 @@ def _parse_iso(value):
 
 
 def _secret(name, default=""):
+    """Read a setting from Streamlit Secrets, then Railway/environment variables."""
     try:
-        return str(st.secrets.get(name, default)).strip()
+        value = str(st.secrets.get(name, "")).strip()
     except Exception:
-        return str(default).strip()
+        value = ""
+    if value:
+        return value
+    value = os.getenv(name, "").strip()
+    return value or str(default).strip()
 
 
 def get_admin_username():
@@ -1735,9 +1718,8 @@ def get_admin_username():
 
 
 def get_admin_password():
-    # Works immediately even before Streamlit Secrets are configured.
-    # For production, set ADMIN_PASSWORD in Streamlit Secrets to override this bootstrap value.
-    return _secret("ADMIN_PASSWORD", "0719067125")
+    """Read the owner password only from Streamlit Secrets or environment-backed secrets."""
+    return _secret("ADMIN_PASSWORD", "")
 
 
 def license_connection():
@@ -1832,7 +1814,7 @@ def normalize_access_code(value):
 
 
 def _hash_code(code):
-    pepper = _secret("LICENSE_PEPPER", raw_cookie_secret)
+    pepper = _secret("LICENSE_PEPPER", hashlib.sha256((raw_cookie_secret + "|license").encode("utf-8")).hexdigest())
     return hmac.new(pepper.encode("utf-8"), code.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
@@ -2367,6 +2349,15 @@ def _copy_card(name, code, expires_text):
 def admin_dashboard():
     st.markdown('<div class="hero"><h1>AI KHEMRA BRO</h1><p>PRIVATE OWNER MANAGEMENT</p></div>', unsafe_allow_html=True)
     admin_password = get_admin_password()
+
+    if not admin_password:
+        st.error("មិនទាន់បានកំណត់ ADMIN_PASSWORD ក្នុង Streamlit Secrets ទេ។")
+        st.code('ADMIN_USERNAME = "KHEMRA"\nADMIN_PASSWORD = "ដាក់លេខសម្ងាត់ខ្លាំងនៅទីនេះ"\nCOOKIE_SECRET = "ដាក់សោចៃដន្យវែងយ៉ាងតិច 32 តួ"\nLICENSE_PEPPER = "ដាក់សោចៃដន្យផ្សេងមួយទៀត"', language="toml")
+        if st.button("← ត្រឡប់ទៅ Customer Login", key="close_admin_missing_secret", use_container_width=True):
+            st.session_state.admin_gate_visible = False
+            st.session_state.owner_click_count = 0
+            st.rerun()
+        return
 
     if not st.session_state.get("admin_authenticated", False):
         left, center, right = st.columns([1, 1.25, 1])
