@@ -21,7 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "7.0-NATURAL-VOICE"
+APP_VERSION = "7.1-NATURAL-VOICE-TAG-FIXED"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -406,13 +406,9 @@ SREYMOM='km-KH-SreymomNeural'
 # Normal dialogue stays neutral and stable. Inner-thought voices are deliberately
 # softer, slower and slightly lighter so they are clearly different.
 VOICE_PROFILES={
-    # Piseth — male spoken dialogue
     'M':{'voice':PISITH,'rate':'+0%','pitch':'-1Hz','volume':'+3%'},
-    # Sreymom — female spoken dialogue
     'F':{'voice':SREYMOM,'rate':'+0%','pitch':'+0Hz','volume':'+3%'},
-    # Piseth — quiet male inner thought
     'M_THINK':{'voice':PISITH,'rate':'-4%','pitch':'-2Hz','volume':'-6%'},
-    # Sreymom — quiet female inner thought
     'F_THINK':{'voice':SREYMOM,'rate':'-4%','pitch':'-1Hz','volume':'-6%'},
 }
 VALID_SPEAKER_TAGS={'M','F','M_THINK','F_THINK'}
@@ -1632,59 +1628,28 @@ def run_async(coro):
         loop.close(); asyncio.set_event_loop(None)
 
 def prepare_tts_text(text, final=True):
-    """Prepare short Khmer dialogue for natural Edge-TTS phrasing."""
+    """Prepare Khmer dialogue for smoother, natural Edge-TTS speech."""
     clean = normalize_dialogue(text)
     if not clean:
         return ""
 
-    # Remove tag remnants and normalize spacing around Khmer punctuation.
     clean = re.sub(r'^\s*\[(?:M|F|M_THINK|F_THINK)\]\s*', '', clean, flags=re.I)
     clean = re.sub(r'\s+', ' ', clean).strip()
     clean = re.sub(r'\s+([?!។…])', r'\1', clean)
     clean = re.sub(r'([?!។…])\1+', r'\1', clean)
-
-    # Commas often create an unnatural mechanical pause in Khmer TTS.
     clean = clean.replace(',', ' ')
     clean = re.sub(r'\s+', ' ', clean).strip()
 
     if not clean:
         return ""
 
-    # A completed cue gets a Khmer full stop. A fragment inside a merged phrase
-    # remains open so Edge-TTS can continue with one natural breath.
     if clean[-1] not in '?!។…':
-        if final:
-            clean += '។'
-        else:
-            clean += ' '
+        clean += '។' if final else ' '
     return clean
 
 
-async def synthesize(text, profile, output_path, final=True):
-    clean_text = prepare_tts_text(text, final=final)
-    if not clean_text:
-        raise ValueError('មានបន្ទាត់ SRT ទទេ។')
-    last_error = None
-    attempts = [
-        profile,
-        {**profile, 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+0%'},
-        {'voice': profile.get('voice', PISITH), 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+0%'},
-    ]
-    for current in attempts:
-        try:
-            await edge_tts.Communicate(
-                text=clean_text, voice=current['voice'], rate=current['rate'],
-                pitch=current['pitch'], volume=current['volume']
-            ).save(str(output_path))
-            if output_path.exists() and output_path.stat().st_size > 500:
-                return
-        except Exception as exc:
-            last_error = exc
-            await asyncio.sleep(0.8)
-    raise RuntimeError(f'Edge TTS មិនបានផ្ញើសំឡេង៖ {last_error or "unknown error"}')
-
 def character_voice_filters(tag):
-    """Very gentle voice shaping that preserves the native Edge-TTS character."""
+    """Apply gentle shaping while preserving the native Edge-TTS voice."""
     mapping = {
         'M': [
             'equalizer=f=190:t=q:w=1.0:g=0.35',
