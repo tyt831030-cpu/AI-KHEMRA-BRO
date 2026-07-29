@@ -1,10 +1,16 @@
-# AI KHEMRA BRO v6.2
+# AI KHEMRA BRO v6.3
 
-Main fix: Gemini model compatibility for Video → Whisper → Khmer SRT → MP3.
+## New professional subtitle and dubbing rules
 
-- Defaults to `gemini-3.5-flash-lite`.
-- Automatic fallback to other supported Flash models.
-- Keeps Chinese source transcription separate from Khmer SRT.
-- MP3 generation requires valid Khmer subtitle text.
+Generated Khmer SRT now uses only four tags:
 
-Deploy by replacing `app.py`, keeping `requirements.txt` and `packages.txt`, then redeploying the service.
+- `[M]` male audible dialogue
+- `[F]` female audible dialogue
+- `[M_THINK]` unheard male inner thought
+- `[F_THINK]` unheard female inner thought
+
+Translation is instructed to use natural everyday spoken Khmer, actor-appropriate pronouns, emotional depth, concise subtitle lines, unchanged cue IDs/timestamps, and SRT-ready output.
+
+Legacy labels remain readable during MP3 generation, but every newly generated SRT is normalized to the four-tag standard.
+
+Deploy by replacing `app.py`, `requirements.txt`, and `packages.txt`, then redeploying the service.
