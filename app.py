@@ -634,18 +634,10 @@ def clear_private_user_session(delete_saved_api=False):
             del st.session_state[state_key]
 
 
-def _data_root():
-    """Return persistent writable storage (Railway Volume when DATA_DIR=/data)."""
-    configured = os.getenv("DATA_DIR", "").strip()
-    root = Path(configured) if configured else Path(tempfile.gettempdir()) / "ai_khemra_bro_data"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
 def _new_project_workspace():
-    """Create a private persistent workspace for this Streamlit browser session."""
+    """Create a private workspace for this Streamlit browser session only."""
     session_id = uuid.uuid4().hex
-    workspace = _data_root() / "sessions" / session_id
+    workspace = Path(tempfile.gettempdir()) / "ai_khemra_bro_sessions" / session_id
     workspace.mkdir(parents=True, exist_ok=True)
     return session_id, workspace
 
@@ -903,16 +895,6 @@ def contains_cjk(text):
     return bool(re.search(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]", text or ""))
 
 
-def contains_khmer(text):
-    """True when text contains at least one Khmer character."""
-    return bool(re.search(r"[\u1780-\u17FF]", text or ""))
-
-
-def valid_khmer_dialogue(text):
-    dialogue = normalize_dialogue(text)
-    return bool(dialogue) and contains_khmer(dialogue) and not contains_cjk(dialogue)
-
-
 def normalize_dialogue(text):
     text = re.sub(r"```|<[^>]+>", "", str(text or ""))
     text = re.sub(r"\s+", " ", text).strip()
@@ -943,7 +925,7 @@ def translation_needs_repair(cue, item):
     if not item:
         return True
     dialogue = normalize_dialogue(item.get("text"))
-    if not valid_khmer_dialogue(dialogue):
+    if not dialogue or contains_cjk(dialogue):
         return True
     # A tiny tolerance avoids needless API calls for Khmer tokenization quirks.
     return khmer_word_count(dialogue) > cue_word_limit(cue["start"], cue["end"]) + 2
@@ -1134,6 +1116,68 @@ def friendly_ai_error(exc, key_count=1):
     message = re.sub(r"https?://\\S+", "", str(exc))
     return f"AI មិនអាចបញ្ចប់ការបកប្រែបាន៖ {message[:420]}"
 
+
+def video_to_srt(video_path, api_keys, model):
+    """
+    Whisper creates timestamps once.
+    Gemini keys rotate automatically when a key has quota/rate-limit problems.
+    The normal path uses one translation pass plus targeted repair only,
+    reducing Gemini requests compared with the previous three-pass workflow.
+    """
+    if isinstance(api_keys, str):
+        api_keys = [api_keys]
+    api_keys = [str(key).strip() for key in api_keys if str(key).strip()]
+    if not api_keys:
+        raise ValueError("មិនមាន Gemini API Key សម្រាប់ប្រើទេ។")
+
+    with tempfile.TemporaryDirectory() as folder:
+        folder_path = Path(folder)
+        proxy_path = folder_path / "video_proxy_480p.mp4"
+        audio_path = folder_path / "audio_16k.flac"
+
+        # Convert the large MP4 into a small processing copy. The original file
+        # is used only as a fallback when FFmpeg cannot create the proxy.
+        processing_video = Path(video_path)
+        try:
+            processing_video = optimize_video_for_processing(video_path, proxy_path)
+        except Exception:
+            processing_video = Path(video_path)
+
+        extract_audio(processing_video, audio_path)
+        cues = transcribe_with_whisper(audio_path)
+        if not cues:
+            raise RuntimeError("Whisper មិនរកឃើញសំឡេងនិយាយក្នុងវីដេអូនេះទេ។")
+
+        last_error = None
+
+        for api_key in api_keys:
+            try:
+                client = genai.Client(api_key=api_key)
+                uploaded_video = upload_for_context(client, processing_video)
+
+                # One main translation pass. translate_cues already repairs
+                # missing/Chinese cues, so the old extra full refinement pass
+                # is skipped to conserve free-tier requests.
+                translated = translate_cues(
+                    client, model, uploaded_video, cues
+                )
+                translated = repair_translation_items(
+                    client, model, uploaded_video, cues, translated
+                )
+
+                result = build_srt(cues, translated)
+                if "-->" not in result:
+                    raise RuntimeError("មិនអាចបង្កើត Khmer SRT បានទេ។")
+                return result
+
+            except Exception as exc:
+                last_error = exc
+                if is_quota_error(exc) or is_invalid_key_error(exc):
+                    # Try the next API key saved by this user.
+                    continue
+                raise RuntimeError(friendly_ai_error(exc, len(api_keys))) from exc
+
+        raise RuntimeError(friendly_ai_error(last_error, len(api_keys)))
 
 
 
@@ -1368,8 +1412,8 @@ def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
             except (TypeError, ValueError, AttributeError):
                 continue
             tag = normalize_output_tag(item.get("tag", "M"))
-            dialogue = normalize_dialogue(item.get("text", ""))
-            if valid_khmer_dialogue(dialogue):
+            dialogue = str(item.get("text", "")).strip()
+            if dialogue:
                 updated[cue_id] = {"tag": tag, "text": dialogue}
 
     blocks = []
@@ -1425,12 +1469,10 @@ async def synthesize(text, profile, output_path):
     if not clean_text:
         raise ValueError('មានបន្ទាត់ SRT ទទេ។')
     last_error = None
-    # Retry without erasing the character profile. THINK must remain slower/softer
-    # than normal dialogue even when Edge-TTS needs another attempt.
     attempts = [
-        dict(profile),
-        {**profile, 'rate': profile.get('rate', '-3%'), 'pitch': profile.get('pitch', '-2Hz')},
-        {**profile, 'volume': profile.get('volume', '+0%')},
+        profile,
+        {**profile, 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+0%'},
+        {'voice': profile.get('voice', PISITH), 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+0%'},
     ]
     for current in attempts:
         try:
@@ -1509,16 +1551,10 @@ def create_mp3(srt_text, progress_callback=None):
         raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
 
     chinese_rows = [i + 1 for i, cue in enumerate(cues) if contains_cjk(cue['text'])]
-    non_khmer_rows = [i + 1 for i, cue in enumerate(cues) if not contains_khmer(cue['text'])]
     if chinese_rows:
         raise ValueError(
             f'SRT នៅមានអក្សរចិននៅបន្ទាត់៖ {chinese_rows[:20]}។ '
             'សូម Generate SRT ឡើងវិញ។'
-        )
-    if non_khmer_rows:
-        raise ValueError(
-            f'SRT មិនមានអក្សរខ្មែរត្រឹមត្រូវនៅបន្ទាត់៖ {non_khmer_rows[:20]}។ '
-            'សូមបកប្រែឬកែ SRT មុនបង្កើត MP3។'
         )
 
     with tempfile.TemporaryDirectory() as folder:
@@ -1663,7 +1699,7 @@ def create_mp3(srt_text, progress_callback=None):
 # PRIVATE CUSTOMER LOGIN + HIDDEN OWNER LICENSE MANAGEMENT
 # This module adds security only. The original app UI/workflow below is unchanged.
 # ─────────────────────────────────────────────────────────────────────────────
-LICENSE_DB_PATH = _data_root() / "licenses.db"
+LICENSE_DB_PATH = Path(__file__).with_name("licenses.db")
 SESSION_COOKIE_NAME = "ai_khemra_bro_customer_session"
 LOGIN_COOKIE_NAME = "ai_khemra_bro_saved_login"
 SESSION_IDLE_MINUTES = 30
@@ -1688,10 +1724,6 @@ def _parse_iso(value):
 
 
 def _secret(name, default=""):
-    """Read Railway environment variables first, then Streamlit secrets."""
-    env_value = os.getenv(name)
-    if env_value is not None and str(env_value).strip():
-        return str(env_value).strip()
     try:
         return str(st.secrets.get(name, default)).strip()
     except Exception:
@@ -1705,7 +1737,7 @@ def get_admin_username():
 def get_admin_password():
     # Works immediately even before Streamlit Secrets are configured.
     # For production, set ADMIN_PASSWORD in Streamlit Secrets to override this bootstrap value.
-    return _secret("ADMIN_PASSWORD", "")
+    return _secret("ADMIN_PASSWORD", "0719067125")
 
 
 def license_connection():
@@ -1796,7 +1828,7 @@ def normalize_customer_name(value):
 
 
 def normalize_access_code(value):
-    return re.sub(r"[^A-Z0-9_-]", "", str(value or "").strip().upper())[:64]
+    return re.sub(r"[^A-Z0-9-]", "", str(value or "").strip().upper())[:48]
 
 
 def _hash_code(code):
@@ -1969,7 +2001,12 @@ def _saved_login_delete():
 
 
 def validate_customer_login(customer_name, access_code, existing_token="", acquire_session=False):
-    """Validate license and enforce one active browser/device session per code."""
+    """Validate a customer license without binding it to a device or browser.
+
+    A valid, active, unexpired access code may be used again after logout,
+    browser close, phone restart, or from another phone. The customer name is
+    kept for display but the access code is the authentication credential.
+    """
     entered_name = normalize_customer_name(customer_name)
     code = normalize_access_code(access_code)
     if not code:
@@ -1981,10 +2018,9 @@ def validate_customer_login(customer_name, access_code, existing_token="", acqui
 
     now = _utcnow()
     code_hash = _hash_code(code)
-    token = existing_token or secrets.token_urlsafe(32)
-    token_hash = _hash_session(token)
     failure_reason = ""
     fresh = None
+    token = existing_token or secrets.token_urlsafe(32)
 
     with license_connection() as connection:
         row = connection.execute(
@@ -1999,32 +2035,27 @@ def validate_customer_login(customer_name, access_code, existing_token="", acqui
         elif now >= _parse_iso(row["expires_at"]):
             failure_reason = "កញ្ចប់របស់អ្នកបានផុតកំណត់។ សូមទាក់ទង Owner ដើម្បីបន្តសិទ្ធិប្រើប្រាស់។"
         else:
-            active_hash = str(row["active_session_hash"] or "")
-            last_seen_raw = row["active_session_last_seen"]
-            active_is_fresh = False
-            if active_hash and last_seen_raw:
-                try:
-                    active_is_fresh = now - _parse_iso(last_seen_raw) < datetime.timedelta(minutes=SESSION_IDLE_MINUTES)
-                except Exception:
-                    active_is_fresh = False
-
-            same_session = bool(active_hash and hmac.compare_digest(active_hash, token_hash))
-            if active_is_fresh and not same_session:
-                failure_reason = "Access Code នេះកំពុងប្រើនៅលើទូរសព្ទ ឬ Browser មួយផ្សេង។ សូម Logout ពីឧបករណ៍ចាស់ ឬរង់ចាំ Session ផុតកំណត់។"
-            else:
+            # No device lock and no single-session lock. A purchased code can
+            # be reused after logout/close and can work on any phone/browser.
+            if acquire_session:
                 connection.execute(
                     """
                     UPDATE licenses
-                    SET active_session_hash=?, active_session_last_seen=?,
-                        last_login_at=CASE WHEN ? THEN ? ELSE last_login_at END,
-                        login_count=login_count + CASE WHEN ? THEN 1 ELSE 0 END
+                    SET active_session_hash=NULL,
+                        active_session_last_seen=NULL,
+                        last_login_at=?,
+                        login_count=login_count+1
                     WHERE id=?
                     """,
-                    (token_hash, _iso(now), 1 if acquire_session else 0, _iso(now),
-                     1 if acquire_session else 0, row["id"]),
+                    (_iso(now), row["id"]),
                 )
-                connection.commit()
-                fresh = connection.execute("SELECT * FROM licenses WHERE id=?", (row["id"],)).fetchone()
+            else:
+                connection.execute(
+                    "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL WHERE id=?",
+                    (row["id"],),
+                )
+            connection.commit()
+            fresh = connection.execute("SELECT * FROM licenses WHERE id=?", (row["id"],)).fetchone()
 
     if acquire_session:
         _record_login_attempt(attempt_key, not bool(failure_reason))
@@ -2033,25 +2064,26 @@ def validate_customer_login(customer_name, access_code, existing_token="", acqui
 
     display_name = str(fresh["customer_name"] or entered_name or "Customer")
     if acquire_session:
-        _audit("customer_login", display_name, "success|single-device")
+        _audit("customer_login", display_name, "success|multi-device")
     return True, "", dict(fresh), token
 
+
 def release_customer_session(access_code, token, actor="customer"):
-    """Release only the session that owns the active session token."""
+    """Log out this browser only; never block reuse of the purchased code."""
     code = normalize_access_code(access_code)
-    token_hash = _hash_session(token) if token else ""
     with license_connection() as connection:
         row = connection.execute(
-            "SELECT id,customer_name,active_session_hash FROM licenses WHERE access_code_hash=? OR access_code_display=?",
+            "SELECT id,customer_name FROM licenses WHERE access_code_hash=? OR access_code_display=?",
             (_hash_code(code), code),
         ).fetchone()
-        if row and token_hash and hmac.compare_digest(str(row["active_session_hash"] or ""), token_hash):
+        if row:
             connection.execute(
                 "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL WHERE id=?",
                 (row["id"],),
             )
             connection.commit()
             _audit("customer_logout", actor, row["customer_name"])
+
 
 def license_rows(search_text=""):
     query = "SELECT * FROM licenses"
@@ -2491,6 +2523,12 @@ def admin_dashboard():
 
 
 initialize_license_database()
+# Compatibility cleanup: remove historical device/session locks created by older versions.
+with license_connection() as _lock_cleanup_connection:
+    _lock_cleanup_connection.execute(
+        "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL"
+    )
+    _lock_cleanup_connection.commit()
 hidden_owner_trigger()
 if st.session_state.get("admin_gate_visible", False) or st.session_state.get("admin_authenticated", False):
     admin_dashboard()
@@ -2718,21 +2756,17 @@ with tab_video:
                                     progress_text.markdown(f"### ⏱️ {percent}% • {minutes:02d}:{seconds:02d}<br>🌐 កំពុងបកប្រែទៅភាសាខ្មែរ…", unsafe_allow_html=True)
                                     time.sleep(0.5)
                                 generated_srt = future.result()
-                            parsed_result = parse_srt(generated_srt)
-                            invalid_rows = [i + 1 for i, cue in enumerate(parsed_result) if not valid_khmer_dialogue(cue.get("text", ""))]
-                            if not parsed_result or invalid_rows:
-                                raise ValueError(f"លទ្ធផលបកប្រែមិនមែនជាខ្មែរត្រឹមត្រូវនៅបន្ទាត់៖ {invalid_rows[:20]}")
                             notice = "✅ Khmer SRT បានបង្កើតរួចរាល់។"
                         except Exception as translation_exc:
-                            # Keep Source SRT separately; never place Chinese text in the Khmer editor.
-                            generated_srt = ""
+                            # Never discard Whisper output when Gemini quota/key fails.
+                            generated_srt = source_srt
                             notice = (
                                 "⚠️ Whisper បានបង្កើត Source SRT រួច ប៉ុន្តែ Gemini មិនអាចបកប្រែបាន។ "
                                 + friendly_ai_error(translation_exc, len(valid_api_keys))
                             )
                     else:
-                        generated_srt = ""
-                        notice = "⚠️ បានបង្កើត Source SRT រួច។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។ Khmer SRT មិនត្រូវបានបង្កើតនៅឡើយទេ។"
+                        generated_srt = source_srt
+                        notice = "⚠️ បានបង្កើត Source SRT រួច។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។"
 
                     st.session_state.srt_text = generated_srt
                     st.session_state.main_srt_editor = generated_srt

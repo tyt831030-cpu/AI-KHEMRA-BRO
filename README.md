@@ -15,16 +15,3 @@ streamlit run app.py
 ```
 
 Railway/Nixpacks ត្រូវមាន FFmpeg តាម `packages.txt`។
-
-## v7.2 scanned fixes
-- Railway environment variables are read before Streamlit secrets.
-- No hard-coded admin password; set `ADMIN_PASSWORD` in Railway.
-- Failed Gemini translation never copies Chinese Source SRT into the Khmer editor.
-- Final Khmer and MP3 validation rejects Chinese/non-Khmer cues.
-- THINK voice settings remain distinct during Edge-TTS retries.
-- One active device/browser session is enforced per Access Code.
-- SQLite database and user workspaces use `DATA_DIR` (set `/data` on Railway).
-- Duplicate `video_to_srt` implementation removed.
-
-Railway variables required: `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `COOKIE_SECRET`, `LICENSE_PEPPER`, `DATA_DIR=/data`.
-Mount a Railway Volume at `/data`.
