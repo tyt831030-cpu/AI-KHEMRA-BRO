@@ -1,4 +1,4 @@
-# AI KHEMRA BRO v6.4.1 AUDITED
+# AI KHEMRA BRO v6.4.2 AUDITED
 
 ## Railway deployment
 1. Upload every file in this folder to the root of one GitHub repository.
@@ -18,7 +18,7 @@ Pipeline: MP4 upload → FFmpeg → Faster-Whisper → Gemini Khmer SRT → SRT 
 
 Generated subtitles use only `[M]`, `[F]`, `[M_THINK]`, and `[F_THINK]`.
 
-## Audit fixes in v6.4.1
+## Audit fixes in v6.4.2
 - Corrected JSON code-fence parsing.
 - Corrected URL cleanup in user-facing AI errors.
 - Allowed the configured six Gemini retry attempts instead of silently limiting them to four.
@@ -26,3 +26,7 @@ Generated subtitles use only `[M]`, `[F]`, `[M_THINK]`, and `[F_THINK]`.
 - Normalized old SRT tags to the four current output tags.
 - Preferred current GA Gemini Flash models while retaining active fallbacks.
 - Added Streamlit upload/message limits and a Docker health check.
+
+
+## v6.4.2
+- Added the six strict Khmer spoken-dialogue and four-tag dubbing rules directly to the Gemini translation prompt.

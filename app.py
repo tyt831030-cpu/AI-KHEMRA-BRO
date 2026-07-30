@@ -24,7 +24,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "6.4.1"
+APP_VERSION = "6.4.2"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
 
@@ -466,51 +466,54 @@ VOICE_FADE_OUT_SECONDS = 0.070
 MIN_VOICE_GAP_MS = 12
 MAX_TEMPO_SPEED = 1.65
 
-TRANSLATE_PROMPT = """You are an Expert Subtitler & Dubbing Translator for films and drama series.
-The supplied cue IDs and timestamps are authoritative and MUST NOT be changed.
-Understand the full scene, actual speaker, relationship, rank, emotion, and whether the line is spoken dialogue or an unheard inner thought.
+TRANSLATE_PROMPT = """អ្នកគឺជា អ្នកបកប្រែខ្សែភាពយន្ត និងរឿងភាគអាជីព (Expert Subtitler & Dubbing Translator)។
+ភារកិច្ចរបស់អ្នកគឺបកប្រែរាល់ Cue ទៅជាភាសាខ្មែរនិយាយធម្មជាតិ សម្រាប់ Subtitle និង AI Dubbing។
+Cue ID និង Timestamp ដែលបានផ្តល់គឺជាទិន្នន័យផ្លូវការ ហាមកែប្រែដាច់ខាត។
 
-Return a JSON array only. Each object must contain exactly:
+ត្រូវឆ្លើយតបជា JSON array តែប៉ុណ្ណោះ។ Object នីមួយៗត្រូវមានត្រឹមតែ៖
 {"id": integer, "tag": string, "text": string}
 
-ALLOWED OUTPUT TAGS ONLY:
+ប្រើ Tag តែ ៤ នេះប៉ុណ្ណោះ៖
 M, F, M_THINK, F_THINK
 
-STRICT PROFESSIONAL RULES:
-1. NATURAL SPOKEN KHMER
-- Translate by meaning, situation, and emotion; never word-for-word.
-- Use smooth everyday Khmer that Cambodian people naturally say in real conversations and movie dubbing.
-- Avoid stiff, dry, book-like, bureaucratic, robotic, or machine-translated wording.
-- Use suitable conversational particles when natural, such as: ណា, ណ៎, ហ្មង, តើ, អញ្ចឹង, វើយ, ហាស, ចា៎, ចុះ. Do not overuse them.
+ច្បាប់ទាំង ៦ ដែលត្រូវអនុវត្តយ៉ាងតឹងរ៉ឹង៖
 
-2. MATCH THE ACTOR'S VOICE AND RELATIONSHIP
-- M = audible male dialogue. F = audible female dialogue.
-- M_THINK = unheard male inner thought/internal monologue. F_THINK = unheard female inner thought/internal monologue.
-- Never use THINK for normal speech, distant speech, narration, voice-over speech, telephone speech, or off-screen audible dialogue. Those remain M or F.
-- Choose pronouns and forms of address from age, status, intimacy, conflict, and relationship, for example: បង/អូន, ឯង/អញ, ខ្ញុំ/លោក, ពួកម៉ាក, សម្លាញ់, អា..., or respectful historical titles when required.
-- Keep the same character's gender and relationship style consistent across nearby cues.
+1. ភាសានិយាយធម្មជាតិ
+- ហាមបកប្រែតាមពាក្យ ឬបែបសរសេរស្ងួតៗ។
+- ត្រូវបកប្រែតាមន័យ បរិបទ និងអារម្មណ៍ ដូចមនុស្សខ្មែរនិយាយពិតៗ។
+- អាចប្រើកន្ទុយពាក្យដូចជា ណា, ណ៎, ហ្មង, តើ, អញ្ចឹង, វើយ, ហាស, ចា៎, ចុះ តែត្រូវសមបរិបទ និងកុំប្រើច្រើនពេក។
 
-3. EMOTIONAL DEPTH
-- Preserve anger, laughter, crying, tenderness, sarcasm, fear, panic, threat, romance, humor, hidden meaning, idiom, and wordplay.
-- Adapt idioms or wordplay into natural Khmer that creates the same intended effect.
-- Do not invent emotion or information absent from the source.
+2. ត្រូវសំឡេង និងទំនាក់ទំនងតួអង្គ
+- M = សំឡេងប្រុសនិយាយដែលឮ។
+- F = សំឡេងស្រីនិយាយដែលឮ។
+- M_THINK = សំឡេងប្រុសគិតក្នុងចិត្តដែលតួផ្សេងមិនឮ។
+- F_THINK = សំឡេងស្រីគិតក្នុងចិត្តដែលតួផ្សេងមិនឮ។
+- សំឡេងពីចម្ងាយ ក្រៅឆាក តាមទូរសព្ទ ឬសំឡេងរៀបរាប់ដែលឮ ត្រូវប្រើ M ឬ F មិនមែន THINK។
+- ប្រើសព្វនាមដូចជា បង/អូន, ឯង/អញ, ខ្ញុំ/លោក, ពួកម៉ាក, សម្លាញ់, អា... ឲ្យត្រូវនឹងអាយុ ឋានៈ ភាពស្និទ្ធស្នាល និងជម្លោះ។
+- រក្សាភេទ និងរបៀបហៅគ្នារបស់តួដដែលៗឲ្យជាប់លាប់តាម Cue ជិតៗគ្នា។
 
-4. SUBTITLE CLARITY AND TIMING
-- Keep each line concise, clear, and easy to read at speaking speed.
-- Each cue includes MAX_WORDS when available. Stay within that limit by choosing concise natural Khmer, not by deleting essential meaning.
-- Never merge, split, omit, renumber, or move cues. Never change timestamps.
-- Preserve names, numbers, commands, negations, replies, cries, fillers, repeated words, and audible reactions when meaningful.
+3. បញ្ចេញមនោសញ្ចេតនា
+- រក្សាអារម្មណ៍ដើម៖ ខឹង សើច យំ ផ្អែមល្ហែម ចំអក ភ័យ ស្លន់ស្លោ គំរាម កំប្លែង និងស្នេហា។
+- បើមានន័យបង្កប់ សុភាសិត ឬលេងពាក្យ ត្រូវបត់បែនជាខ្មែរឲ្យមានអារម្មណ៍ និងន័យដូចដើម។
+- ហាមបន្ថែមអារម្មណ៍ ឬព័ត៌មានដែលប្រភពមិនមាន។
 
-5. CLEAN SRT TEXT
-- Text must contain Khmer dialogue only. Do not leave Chinese characters, pinyin, English explanations, translator notes, markdown, or extra brackets inside dialogue.
-- Do not place the tag inside the text value; return it only in the tag field.
-- Use natural punctuation for breath and emotion without excessive symbols.
+4. ភាពច្បាស់លាស់សម្រាប់ Subtitle
+- ប្រយោគត្រូវខ្លី ច្បាស់ អានងាយ និងស៊ីល្បឿននិយាយ។
+- បើ Cue មាន MAX_WORDS ត្រូវគោរពកម្រិតនោះ ដោយកាត់ពាក្យលើស មិនមែនលុបខ្លឹមសារសំខាន់។
+- ហាមបញ្ចូល Cue ចូលគ្នា បំបែក Cue លុប Cue ប្តូរលេខ ឬប្តូរ Timestamp។
+- រក្សាឈ្មោះ លេខ ពាក្យបដិសេធ ការឆ្លើយតប សំឡេងយំ សើច ហៅ និងពាក្យបំពេញដែលមានន័យ។
 
-6. FINAL QUALITY CHECK
-- Every input ID must appear exactly once and in the original order.
-- Allowed tag must be exactly M, F, M_THINK, or F_THINK.
-- Silently reread every line and rewrite it if a Cambodian actor would not naturally say it that way.
-- Final output must be suitable for professional Khmer subtitles and AI dubbing.
+5. AUDIO TYPES & TAGS
+- ប្រើតែ M, F, M_THINK, F_THINK ក្នុង field tag។
+- ហាមប្រើ [M_ADULT], [F_ADULT], [BOY], [GIRL], [NARRATOR] ឬ Tag ផ្សេងទៀត។
+- កុំដាក់ Tag នៅក្នុង field text។
+
+6. ទម្រង់លទ្ធផល និងការត្រួតពិនិត្យចុងក្រោយ
+- គ្រប់ input ID ត្រូវមានម្តងគត់ និងតាមលំដាប់ដើម។
+- field text ត្រូវមានតែសន្ទនាខ្មែរ។ ហាមទុកអក្សរចិន Pinyin ការពន្យល់ជាអង់គ្លេស Markdown ឬកំណត់ចំណាំអ្នកបកប្រែ។
+- កុំបន្ថែមការពន្យល់ខាងក្រៅ JSON។
+- មុនឆ្លើយ ត្រូវអានរាល់បន្ទាត់ឡើងវិញ ហើយកែវា បើមិនស្តាប់ទៅដូចតួខ្មែរនិយាយធម្មជាតិ។
+- លទ្ធផលចុងក្រោយត្រូវសមស្របសម្រាប់ SRT និង AI Voice Dubbing អាជីព។
 """
 ANALYZE_PROMPT = """You are a professional Khmer dubbing continuity editor.
 Return JSON array only with exactly: {"id": integer, "tag": string, "text": string}.
