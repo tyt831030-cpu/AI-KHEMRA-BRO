@@ -3,9 +3,6 @@ import base64
 import datetime
 import hashlib
 import hmac
-import json
-import os
-import random
 import re
 import secrets
 import sqlite3
@@ -24,30 +21,9 @@ from cryptography.fernet import Fernet, InvalidToken
 from google import genai
 from faster_whisper import WhisperModel
 
-APP_VERSION = "7.0.0"
+APP_VERSION = "6.3.4"
 
 st.set_page_config(page_title='AI KHEMRA BRO', page_icon='🎬', layout='wide', initial_sidebar_state='collapsed')
-
-
-def _early_secret(name, default=""):
-    """Read Streamlit Secrets first, then Railway/environment variables."""
-    try:
-        value = st.secrets.get(name, None)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    except Exception:
-        pass
-    return str(os.getenv(name, default) or default).strip()
-
-# A stable fallback keeps encrypted API keys and login cookies readable after restart.
-# Production deployments should override COOKIE_SECRET in Railway Variables.
-raw_cookie_secret = _early_secret(
-    "COOKIE_SECRET",
-    "AI-KHEMRA-BRO-v6.4-bootstrap-cookie-secret-change-in-production",
-)
-_fernet_key = base64.urlsafe_b64encode(hashlib.sha256(raw_cookie_secret.encode("utf-8")).digest())
-api_cipher = Fernet(_fernet_key)
-cookie_manager = stx.CookieManager(key="khbr_cookie_manager")
 
 st.markdown('''
 <style>
@@ -433,13 +409,13 @@ VOICE_PROFILES={
 'F_ADULT':{'voice':SREYMOM,'rate':'-2%','pitch':'-1Hz','volume':'+7%'},
 'M_OLD':{'voice':PISITH,'rate':'-11%','pitch':'-8Hz','volume':'+8%'},
 'F_OLD':{'voice':SREYMOM,'rate':'-10%','pitch':'-6Hz','volume':'+8%'},
-'M_THINK':{'voice':PISITH,'rate':'-16%','pitch':'-12Hz','volume':'-5%'},
-'F_THINK':{'voice':SREYMOM,'rate':'-15%','pitch':'-10Hz','volume':'-5%'},
+'M_THINK':{'voice':PISITH,'rate':'-7%','pitch':'-4Hz','volume':'+5%'},
+'F_THINK':{'voice':SREYMOM,'rate':'-7%','pitch':'-3Hz','volume':'+5%'},
 'NARRATOR_M':{'voice':PISITH,'rate':'-7%','pitch':'-6Hz','volume':'+8%'},
 'NARRATOR_F':{'voice':SREYMOM,'rate':'-6%','pitch':'-4Hz','volume':'+8%'},
 # Backward-compatible labels for older SRT files.
-'M':{'voice':PISITH,'rate':'-2%','pitch':'-3Hz','volume':'+5%'},
-'F':{'voice':SREYMOM,'rate':'-2%','pitch':'-1Hz','volume':'+5%'},
+'M':{'voice':PISITH,'rate':'-3%','pitch':'-2Hz','volume':'+7%'},
+'F':{'voice':SREYMOM,'rate':'-3%','pitch':'-1Hz','volume':'+7%'},
 'OLD_M':{'voice':PISITH,'rate':'-8%','pitch':'-5Hz','volume':'+8%'},
 'OLD_F':{'voice':SREYMOM,'rate':'-8%','pitch':'-3Hz','volume':'+8%'}
 }
@@ -466,54 +442,51 @@ VOICE_FADE_OUT_SECONDS = 0.070
 MIN_VOICE_GAP_MS = 12
 MAX_TEMPO_SPEED = 1.65
 
-TRANSLATE_PROMPT = """អ្នកគឺជា អ្នកបកប្រែខ្សែភាពយន្ត និងរឿងភាគអាជីព (Expert Subtitler & Dubbing Translator)។
-ភារកិច្ចរបស់អ្នកគឺបកប្រែរាល់ Cue ទៅជាភាសាខ្មែរនិយាយធម្មជាតិ សម្រាប់ Subtitle និង AI Dubbing។
-Cue ID និង Timestamp ដែលបានផ្តល់គឺជាទិន្នន័យផ្លូវការ ហាមកែប្រែដាច់ខាត។
+TRANSLATE_PROMPT = """You are an Expert Subtitler & Dubbing Translator for films and drama series.
+The supplied cue IDs and timestamps are authoritative and MUST NOT be changed.
+Understand the full scene, actual speaker, relationship, rank, emotion, and whether the line is spoken dialogue or an unheard inner thought.
 
-ត្រូវឆ្លើយតបជា JSON array តែប៉ុណ្ណោះ។ Object នីមួយៗត្រូវមានត្រឹមតែ៖
+Return a JSON array only. Each object must contain exactly:
 {"id": integer, "tag": string, "text": string}
 
-ប្រើ Tag តែ ៤ នេះប៉ុណ្ណោះ៖
+ALLOWED OUTPUT TAGS ONLY:
 M, F, M_THINK, F_THINK
 
-ច្បាប់ទាំង ៦ ដែលត្រូវអនុវត្តយ៉ាងតឹងរ៉ឹង៖
+STRICT PROFESSIONAL RULES:
+1. NATURAL SPOKEN KHMER
+- Translate by meaning, situation, and emotion; never word-for-word.
+- Use smooth everyday Khmer that Cambodian people naturally say in real conversations and movie dubbing.
+- Avoid stiff, dry, book-like, bureaucratic, robotic, or machine-translated wording.
+- Use suitable conversational particles when natural, such as: ណា, ណ៎, ហ្មង, តើ, អញ្ចឹង, វើយ, ហាស, ចា៎, ចុះ. Do not overuse them.
 
-1. ភាសានិយាយធម្មជាតិ
-- ហាមបកប្រែតាមពាក្យ ឬបែបសរសេរស្ងួតៗ។
-- ត្រូវបកប្រែតាមន័យ បរិបទ និងអារម្មណ៍ ដូចមនុស្សខ្មែរនិយាយពិតៗ។
-- អាចប្រើកន្ទុយពាក្យដូចជា ណា, ណ៎, ហ្មង, តើ, អញ្ចឹង, វើយ, ហាស, ចា៎, ចុះ តែត្រូវសមបរិបទ និងកុំប្រើច្រើនពេក។
+2. MATCH THE ACTOR'S VOICE AND RELATIONSHIP
+- M = audible male dialogue. F = audible female dialogue.
+- M_THINK = unheard male inner thought/internal monologue. F_THINK = unheard female inner thought/internal monologue.
+- Never use THINK for normal speech, distant speech, narration, voice-over speech, telephone speech, or off-screen audible dialogue. Those remain M or F.
+- Choose pronouns and forms of address from age, status, intimacy, conflict, and relationship, for example: បង/អូន, ឯង/អញ, ខ្ញុំ/លោក, ពួកម៉ាក, សម្លាញ់, អា..., or respectful historical titles when required.
+- Keep the same character's gender and relationship style consistent across nearby cues.
 
-2. ត្រូវសំឡេង និងទំនាក់ទំនងតួអង្គ
-- M = សំឡេងប្រុសនិយាយដែលឮ។
-- F = សំឡេងស្រីនិយាយដែលឮ។
-- M_THINK = សំឡេងប្រុសគិតក្នុងចិត្តដែលតួផ្សេងមិនឮ។
-- F_THINK = សំឡេងស្រីគិតក្នុងចិត្តដែលតួផ្សេងមិនឮ។
-- សំឡេងពីចម្ងាយ ក្រៅឆាក តាមទូរសព្ទ ឬសំឡេងរៀបរាប់ដែលឮ ត្រូវប្រើ M ឬ F មិនមែន THINK។
-- ប្រើសព្វនាមដូចជា បង/អូន, ឯង/អញ, ខ្ញុំ/លោក, ពួកម៉ាក, សម្លាញ់, អា... ឲ្យត្រូវនឹងអាយុ ឋានៈ ភាពស្និទ្ធស្នាល និងជម្លោះ។
-- រក្សាភេទ និងរបៀបហៅគ្នារបស់តួដដែលៗឲ្យជាប់លាប់តាម Cue ជិតៗគ្នា។
+3. EMOTIONAL DEPTH
+- Preserve anger, laughter, crying, tenderness, sarcasm, fear, panic, threat, romance, humor, hidden meaning, idiom, and wordplay.
+- Adapt idioms or wordplay into natural Khmer that creates the same intended effect.
+- Do not invent emotion or information absent from the source.
 
-3. បញ្ចេញមនោសញ្ចេតនា
-- រក្សាអារម្មណ៍ដើម៖ ខឹង សើច យំ ផ្អែមល្ហែម ចំអក ភ័យ ស្លន់ស្លោ គំរាម កំប្លែង និងស្នេហា។
-- បើមានន័យបង្កប់ សុភាសិត ឬលេងពាក្យ ត្រូវបត់បែនជាខ្មែរឲ្យមានអារម្មណ៍ និងន័យដូចដើម។
-- ហាមបន្ថែមអារម្មណ៍ ឬព័ត៌មានដែលប្រភពមិនមាន។
+4. SUBTITLE CLARITY AND TIMING
+- Keep each line concise, clear, and easy to read at speaking speed.
+- Each cue includes MAX_WORDS when available. Stay within that limit by choosing concise natural Khmer, not by deleting essential meaning.
+- Never merge, split, omit, renumber, or move cues. Never change timestamps.
+- Preserve names, numbers, commands, negations, replies, cries, fillers, repeated words, and audible reactions when meaningful.
 
-4. ភាពច្បាស់លាស់សម្រាប់ Subtitle
-- ប្រយោគត្រូវខ្លី ច្បាស់ អានងាយ និងស៊ីល្បឿននិយាយ។
-- បើ Cue មាន MAX_WORDS ត្រូវគោរពកម្រិតនោះ ដោយកាត់ពាក្យលើស មិនមែនលុបខ្លឹមសារសំខាន់។
-- ហាមបញ្ចូល Cue ចូលគ្នា បំបែក Cue លុប Cue ប្តូរលេខ ឬប្តូរ Timestamp។
-- រក្សាឈ្មោះ លេខ ពាក្យបដិសេធ ការឆ្លើយតប សំឡេងយំ សើច ហៅ និងពាក្យបំពេញដែលមានន័យ។
+5. CLEAN SRT TEXT
+- Text must contain Khmer dialogue only. Do not leave Chinese characters, pinyin, English explanations, translator notes, markdown, or extra brackets inside dialogue.
+- Do not place the tag inside the text value; return it only in the tag field.
+- Use natural punctuation for breath and emotion without excessive symbols.
 
-5. AUDIO TYPES & TAGS
-- ប្រើតែ M, F, M_THINK, F_THINK ក្នុង field tag។
-- ហាមប្រើ [M_ADULT], [F_ADULT], [BOY], [GIRL], [NARRATOR] ឬ Tag ផ្សេងទៀត។
-- កុំដាក់ Tag នៅក្នុង field text។
-
-6. ទម្រង់លទ្ធផល និងការត្រួតពិនិត្យចុងក្រោយ
-- គ្រប់ input ID ត្រូវមានម្តងគត់ និងតាមលំដាប់ដើម។
-- field text ត្រូវមានតែសន្ទនាខ្មែរ។ ហាមទុកអក្សរចិន Pinyin ការពន្យល់ជាអង់គ្លេស Markdown ឬកំណត់ចំណាំអ្នកបកប្រែ។
-- កុំបន្ថែមការពន្យល់ខាងក្រៅ JSON។
-- មុនឆ្លើយ ត្រូវអានរាល់បន្ទាត់ឡើងវិញ ហើយកែវា បើមិនស្តាប់ទៅដូចតួខ្មែរនិយាយធម្មជាតិ។
-- លទ្ធផលចុងក្រោយត្រូវសមស្របសម្រាប់ SRT និង AI Voice Dubbing អាជីព។
+6. FINAL QUALITY CHECK
+- Every input ID must appear exactly once and in the original order.
+- Allowed tag must be exactly M, F, M_THINK, or F_THINK.
+- Silently reread every line and rewrite it if a Cambodian actor would not naturally say it that way.
+- Final output must be suitable for professional Khmer subtitles and AI dubbing.
 """
 ANALYZE_PROMPT = """You are a professional Khmer dubbing continuity editor.
 Return JSON array only with exactly: {"id": integer, "tag": string, "text": string}.
@@ -661,17 +634,18 @@ def clear_private_user_session(delete_saved_api=False):
             del st.session_state[state_key]
 
 
-def _workspace_owner_key():
-    """Return a non-reversible per-customer key for private file isolation."""
-    raw = str(st.session_state.get("customer_code", "guest") or "guest").strip().upper()
-    return hashlib.sha256((raw + raw_cookie_secret).encode("utf-8")).hexdigest()[:24]
+def _data_root():
+    """Return persistent writable storage (Railway Volume when DATA_DIR=/data)."""
+    configured = os.getenv("DATA_DIR", "").strip()
+    root = Path(configured) if configured else Path(tempfile.gettempdir()) / "ai_khemra_bro_data"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def _new_project_workspace():
-    """Create a private persistent workspace for one customer and one browser job."""
+    """Create a private persistent workspace for this Streamlit browser session."""
     session_id = uuid.uuid4().hex
-    base = globals().get("WORKSPACES_DIR", Path(tempfile.gettempdir()) / "ai_khemra_bro_workspaces")
-    workspace = Path(base) / _workspace_owner_key() / session_id
+    workspace = _data_root() / "sessions" / session_id
     workspace.mkdir(parents=True, exist_ok=True)
     return session_id, workspace
 
@@ -685,11 +659,6 @@ def _ensure_project_workspace():
         st.session_state.project_workspace = str(workspace)
         return workspace
     workspace = Path(workspace_value)
-    expected_owner = _workspace_owner_key()
-    if expected_owner not in workspace.parts:
-        session_id, workspace = _new_project_workspace()
-        st.session_state.project_session_id = session_id
-        st.session_state.project_workspace = str(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
     return workspace
 
@@ -907,8 +876,8 @@ def upload_for_context(client, video_path):
 def parse_json_array(raw_text):
     import json
     cleaned = (raw_text or "").strip()
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\\s*```$", "", cleaned)
     left, right = cleaned.find("["), cleaned.rfind("]")
     if left == -1 or right == -1 or right <= left:
         raise ValueError("AI មិនបានត្រឡប់ JSON ត្រឹមត្រូវ។")
@@ -934,18 +903,14 @@ def contains_cjk(text):
     return bool(re.search(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]", text or ""))
 
 
-def khmer_letter_count(text):
-    """Count Khmer letters so untranslated Chinese/Latin output is never accepted."""
-    return len(re.findall(r"[\u1780-\u17A2]", str(text or "")))
+def contains_khmer(text):
+    """True when text contains at least one Khmer character."""
+    return bool(re.search(r"[\u1780-\u17FF]", text or ""))
 
 
-def is_valid_khmer_dialogue(text):
-    """Require real Khmer dialogue and reject any remaining CJK characters."""
-    value = normalize_dialogue(text)
-    if not value or contains_cjk(value):
-        return False
-    # Short reactions such as «អូ!» are valid; otherwise require several Khmer letters.
-    return khmer_letter_count(value) >= 1
+def valid_khmer_dialogue(text):
+    dialogue = normalize_dialogue(text)
+    return bool(dialogue) and contains_khmer(dialogue) and not contains_cjk(dialogue)
 
 
 def normalize_dialogue(text):
@@ -954,11 +919,10 @@ def normalize_dialogue(text):
     return text
 
 
-def gemini_generate_with_retry(client, model_name, contents, attempts=3):
-    """Retry temporary Gemini failures briefly, then allow model fallback."""
+def gemini_generate_with_retry(client, model_name, contents, attempts=4):
+    """Call Gemini with bounded retry for temporary network/rate-limit failures."""
     last_error = None
-    attempts = max(1, min(int(attempts), 6))
-    for attempt in range(attempts):
+    for attempt in range(max(1, attempts)):
         try:
             return client.models.generate_content(model=model_name, contents=contents)
         except Exception as exc:
@@ -966,21 +930,20 @@ def gemini_generate_with_retry(client, model_name, contents, attempts=3):
             message = str(exc).upper()
             retryable = any(token in message for token in (
                 "429", "RESOURCE_EXHAUSTED", "RATE LIMIT", "503", "UNAVAILABLE",
-                "TIMEOUT", "DEADLINE_EXCEEDED", "INTERNAL", "HIGH DEMAND"
+                "TIMEOUT", "DEADLINE_EXCEEDED", "INTERNAL"
             ))
             if not retryable or attempt >= attempts - 1:
                 raise
-            # Keep the phone UI responsive; fallback models are tried immediately after this.
-            delay = min(6.0, 1.25 * (2 ** attempt)) + random.uniform(0.15, 0.65)
-            time.sleep(delay)
+            time.sleep(min(8.0, 1.2 * (2 ** attempt)))
     raise last_error
+
 
 def translation_needs_repair(cue, item):
     """Reject missing, Chinese, or clearly overlong dubbing lines."""
     if not item:
         return True
     dialogue = normalize_dialogue(item.get("text"))
-    if not dialogue or contains_cjk(dialogue):
+    if not valid_khmer_dialogue(dialogue):
         return True
     # A tiny tolerance avoids needless API calls for Khmer tokenization quirks.
     return khmer_word_count(dialogue) > cue_word_limit(cue["start"], cue["end"]) + 2
@@ -1123,21 +1086,12 @@ def translate_cues(client, model_name, uploaded_video, cues):
 
 def build_srt(cues, translated):
     blocks = []
-    invalid_ids = []
     for cue in cues:
         item = translated[cue["id"]]
-        if not is_valid_khmer_dialogue(item.get("text", "")):
-            invalid_ids.append(cue["id"])
-            continue
         blocks.append(
             f'{cue["id"]}\n'
             f'{seconds_to_srt(cue["start"])} --> {seconds_to_srt(cue["end"])}\n'
             f'[{normalize_output_tag(item["tag"])}] {item["text"]}'
-        )
-    if invalid_ids:
-        raise RuntimeError(
-            "Khmer SRT នៅមានបន្ទាត់មិនមែនអក្សរខ្មែរ៖ "
-            + ", ".join(map(str, invalid_ids[:20]))
         )
     return "\n\n".join(blocks)
 
@@ -1177,16 +1131,8 @@ def friendly_ai_error(exc, key_count=1):
         )
     if is_invalid_key_error(exc):
         return "Gemini API Key មិនត្រឹមត្រូវ ឬមិនមានសិទ្ធិប្រើ។ សូមដាក់សោថ្មី ហើយចុច «រក្សាទុក»។"
-    upper_message = str(exc).upper()
-    if "503" in upper_message or "UNAVAILABLE" in upper_message or "HIGH DEMAND" in upper_message:
-        return (
-            "ម៉ូឌែល Gemini កំពុងមានអ្នកប្រើច្រើន (503)។ "
-            "កម្មវិធីបានសាកឡើងវិញ និងប្ដូរម៉ូឌែលបម្រុងរួចហើយ។ "
-            "សូមចុច Generate Subtitles ម្ដងទៀតក្រោយពីរបីនាទី។"
-        )
-    message = re.sub(r"https?://\S+", "", str(exc))
+    message = re.sub(r"https?://\\S+", "", str(exc))
     return f"AI មិនអាចបញ្ចប់ការបកប្រែបាន៖ {message[:420]}"
-
 
 
 
@@ -1226,12 +1172,16 @@ def transcribe_video_to_source_srt(video_path):
 # v5.4 reliable Khmer SRT pipeline
 # ---------------------------------------------------------------------------
 def _candidate_gemini_models(selected_model):
-    """Return stable Gemini text models in low-latency fallback order."""
+    """Return production-safe Gemini text models in fallback order.
+
+    The former 2.5-only list caused 404 errors for some new API projects.
+    Stable Gemini 3 models are preferred, followed by the rolling Flash alias
+    and finally 2.5 compatibility models for older projects.
+    """
     ordered = [
         str(selected_model or "").strip(),
         "gemini-3.5-flash-lite",
         "gemini-3.6-flash",
-        "gemini-3.1-flash-lite",
         "gemini-3.5-flash",
         "gemini-flash-latest",
         "gemini-2.5-flash-lite",
@@ -1261,13 +1211,12 @@ STRICT RULES:
 2. Return every input ID exactly once and in the same order.
 3. Never change, merge, split, or invent IDs.
 4. Do not omit short replies, names, numbers, negations, fillers, cries, or reactions.
-5. Output Khmer script only in text. Every text value MUST contain Khmer letters. Never copy SOURCE as fallback. Do not leave Chinese characters, Pinyin, Thai, Vietnamese, or English dialogue.
+5. Output Khmer only in text. Do not leave Chinese, Thai, Vietnamese, or English dialogue.
 6. Keep each line concise enough for its timestamp, but preserve the full meaning.
 7. Select exactly one tag: M, F, M_THINK, F_THINK.
    M/F are audible dialogue; THINK is only unheard internal monologue.
 8. JSON format: [{{"id":1,"tag":"M","text":"..."}}]
 9. Use natural spoken Khmer, suitable pronouns, emotional depth, and concise subtitle wording. Never translate word-for-word.
-10. Before returning JSON, inspect every text value. If it contains Chinese or has no Khmer letters, translate that line again internally.
 
 RECENT CONTEXT:
 {previous_context or '(none)'}
@@ -1275,7 +1224,7 @@ RECENT CONTEXT:
 CUES:
 {cue_lines}
 """.strip()
-    response = gemini_generate_with_retry(client, model_name, [prompt], attempts=6)
+    response = gemini_generate_with_retry(client, model_name, [prompt], attempts=3)
     rows = parse_json_array(response.text or "")
     allowed_ids = {cue["id"] for cue in batch}
     parsed = {}
@@ -1288,40 +1237,16 @@ CUES:
             continue
         tag = normalize_output_tag(row.get("tag", "M"))
         dialogue = normalize_dialogue(row.get("text", ""))
-        if is_valid_khmer_dialogue(dialogue):
+        if dialogue and not contains_cjk(dialogue):
             parsed[cue_id] = {"tag": tag, "text": dialogue}
     return parsed
-
-
-def _repair_single_khmer_line(client, model_name, cue, previous_context=""):
-    """Strict one-line repair used when a batch leaves Chinese or non-Khmer text."""
-    prompt = f"""
-Translate this single movie subtitle into natural spoken Khmer.
-Return JSON array only: [{{"id":{cue['id']},"tag":"M","text":"..."}}]
-The text field MUST contain Khmer letters and MUST NOT contain Chinese characters or Pinyin.
-Never copy the source text. Keep it short, emotional, and suitable for dubbing.
-Use one tag only: M, F, M_THINK, F_THINK. THINK means an unheard inner thought only.
-Context: {previous_context or '(none)'}
-SOURCE: {cue['source']}
-""".strip()
-    response = gemini_generate_with_retry(client, model_name, [prompt], attempts=6)
-    for row in parse_json_array(response.text or ""):
-        try:
-            if int(row.get("id")) != int(cue["id"]):
-                continue
-        except (TypeError, ValueError, AttributeError):
-            continue
-        text = normalize_dialogue(row.get("text", ""))
-        if is_valid_khmer_dialogue(text):
-            return {"tag": normalize_output_tag(row.get("tag", "M")), "text": text}
-    return None
 
 
 def translate_cues_text_only(client, model_name, cues):
     """Low-request translation path designed for free-tier Gemini keys."""
     translated = {}
     # Larger batches reduce request count and 429 failures.
-    batch_size = 20
+    batch_size = 45
     for offset in range(0, len(cues), batch_size):
         batch = cues[offset:offset + batch_size]
         context_rows = []
@@ -1338,24 +1263,15 @@ def translate_cues_text_only(client, model_name, cues):
 
         missing = [cue for cue in batch if cue["id"] not in translated]
         if missing:
-            # First repair as a compact batch, then repair stubborn lines one by one.
-            repaired = _translate_batch_text_only(client, model_name, missing, "\n".join(context_rows))
+            # One compact repair request, only for missing lines.
+            repaired = _translate_batch_text_only(client, model_name, missing)
             translated.update(repaired)
-
-        missing = [cue for cue in batch if cue["id"] not in translated]
-        for cue in missing:
-            item = _repair_single_khmer_line(
-                client, model_name, cue, "\n".join(context_rows[-3:])
-            )
-            if item:
-                translated[cue["id"]] = item
 
         still_missing = [cue["id"] for cue in batch if cue["id"] not in translated]
         if still_missing:
             raise RuntimeError(
-                "AI មិនអាចបកប្រែជាអក្សរខ្មែរបានគ្រប់បន្ទាត់៖ "
+                "AI មិនបានត្រឡប់បន្ទាត់ SRT គ្រប់គ្រាន់៖ "
                 + ", ".join(map(str, still_missing[:20]))
-                + "។ កម្មវិធីមិនយកអក្សរចិនមកបំពេញជំនួសទេ។"
             )
     return translated
 
@@ -1452,8 +1368,8 @@ def analyze_inner_thoughts(srt_text, api_key, model_name, video_path=None):
             except (TypeError, ValueError, AttributeError):
                 continue
             tag = normalize_output_tag(item.get("tag", "M"))
-            dialogue = str(item.get("text", "")).strip()
-            if dialogue:
+            dialogue = normalize_dialogue(item.get("text", ""))
+            if valid_khmer_dialogue(dialogue):
                 updated[cue_id] = {"tag": tag, "text": dialogue}
 
     blocks = []
@@ -1478,7 +1394,7 @@ def parse_srt(srt_text):
         match=time_re.search(lines[idx])
         if not match: continue
         dialogue=' '.join(lines[idx+1:]).strip(); tag_match=tag_re.match(dialogue)
-        tag=normalize_output_tag(tag_match.group(1)) if tag_match else 'M'
+        tag=tag_match.group(1).upper() if tag_match else 'M_ADULT'
         if tag_match: dialogue=dialogue[tag_match.end():].strip()
         if dialogue:
             start_ms=to_ms(match.groups()[:4]); end_ms=to_ms(match.groups()[4:])
@@ -1509,10 +1425,12 @@ async def synthesize(text, profile, output_path):
     if not clean_text:
         raise ValueError('មានបន្ទាត់ SRT ទទេ។')
     last_error = None
+    # Retry without erasing the character profile. THINK must remain slower/softer
+    # than normal dialogue even when Edge-TTS needs another attempt.
     attempts = [
-        profile,
-        {**profile, 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+0%'},
-        {'voice': profile.get('voice', PISITH), 'rate': '+0%', 'pitch': '+0Hz', 'volume': '+0%'},
+        dict(profile),
+        {**profile, 'rate': profile.get('rate', '-3%'), 'pitch': profile.get('pitch', '-2Hz')},
+        {**profile, 'volume': profile.get('volume', '+0%')},
     ]
     for current in attempts:
         try:
@@ -1538,12 +1456,8 @@ def character_voice_filters(tag):
         'F_ADULT': ['equalizer=f=220:t=q:w=1.0:g=0.9', 'equalizer=f=3000:t=q:w=1.0:g=0.2'],
         'M_OLD': ['equalizer=f=140:t=q:w=1.0:g=2.2', 'equalizer=f=2600:t=q:w=1.0:g=-1.0', 'lowpass=f=7200:p=2'],
         'F_OLD': ['equalizer=f=180:t=q:w=1.0:g=1.7', 'equalizer=f=2800:t=q:w=1.0:g=-0.8', 'lowpass=f=7400:p=2'],
-        'M': ['equalizer=f=155:t=q:w=1.0:g=1.3', 'equalizer=f=2600:t=q:w=1.0:g=0.7', 'volume=0.98'],
-        'F': ['equalizer=f=210:t=q:w=1.0:g=0.5', 'equalizer=f=3000:t=q:w=1.0:g=0.8', 'volume=0.98'],
-        # Inner thoughts are deliberately softer, darker and have a very short echo.
-        # This makes them clearly different from audible dialogue without becoming muddy.
-        'M_THINK': ['highpass=f=105:p=2', 'lowpass=f=5400:p=2', 'equalizer=f=190:t=q:w=1.0:g=1.5', 'equalizer=f=3000:t=q:w=1.0:g=-1.8', 'aecho=0.8:0.45:32:0.10', 'volume=0.82'],
-        'F_THINK': ['highpass=f=115:p=2', 'lowpass=f=5600:p=2', 'equalizer=f=230:t=q:w=1.0:g=1.0', 'equalizer=f=3200:t=q:w=1.0:g=-1.5', 'aecho=0.8:0.45:32:0.10', 'volume=0.82'],
+        'M_THINK': ['equalizer=f=180:t=q:w=1.0:g=1.2', 'equalizer=f=3500:t=q:w=1.0:g=-1.0', 'volume=0.96'],
+        'F_THINK': ['equalizer=f=220:t=q:w=1.0:g=0.8', 'equalizer=f=3600:t=q:w=1.0:g=-0.8', 'volume=0.96'],
         'NARRATOR_M': ['equalizer=f=150:t=q:w=1.0:g=2.0', 'equalizer=f=2200:t=q:w=1.0:g=0.8'],
         'NARRATOR_F': ['equalizer=f=200:t=q:w=1.0:g=1.3', 'equalizer=f=2300:t=q:w=1.0:g=0.7'],
     }
@@ -1579,25 +1493,6 @@ def atempo_chain(speed):
     return ",".join(f"atempo={value:.5f}" for value in factors)
 
 
-def validate_khmer_srt(srt_text):
-    """Reject mixed-language output before it reaches dubbing or download."""
-    cues = parse_srt(srt_text)
-    if not cues:
-        raise ValueError("រកមិនឃើញ SRT និង Timestamp ត្រឹមត្រូវទេ។")
-    invalid = []
-    for idx, cue in enumerate(cues, start=1):
-        text = normalize_dialogue(cue.get("text", ""))
-        if contains_cjk(text) or not re.search(r"[\u1780-\u17FF]", text):
-            invalid.append(idx)
-    if invalid:
-        raise ValueError(
-            "SRT មិនទាន់ជាភាសាខ្មែរពេញលេញនៅ Cue៖ "
-            + ", ".join(map(str, invalid[:20]))
-            + "។ សូមបកប្រែឡើងវិញ មុនបង្កើតសំឡេង។"
-        )
-    return cues
-
-
 def create_mp3(srt_text, progress_callback=None):
     """
     Create one synchronized Khmer MP3.
@@ -1609,13 +1504,21 @@ def create_mp3(srt_text, progress_callback=None):
     - Breathy high frequencies are reduced without making speech muddy.
     - Loudness is mastered once at the end instead of aggressively per clip.
     """
-    cues = validate_khmer_srt(srt_text)
+    cues = parse_srt(srt_text)
+    if not cues:
+        raise ValueError('រកមិនឃើញ SRT និង timestamp ត្រឹមត្រូវទេ។')
 
     chinese_rows = [i + 1 for i, cue in enumerate(cues) if contains_cjk(cue['text'])]
+    non_khmer_rows = [i + 1 for i, cue in enumerate(cues) if not contains_khmer(cue['text'])]
     if chinese_rows:
         raise ValueError(
             f'SRT នៅមានអក្សរចិននៅបន្ទាត់៖ {chinese_rows[:20]}។ '
             'សូម Generate SRT ឡើងវិញ។'
+        )
+    if non_khmer_rows:
+        raise ValueError(
+            f'SRT មិនមានអក្សរខ្មែរត្រឹមត្រូវនៅបន្ទាត់៖ {non_khmer_rows[:20]}។ '
+            'សូមបកប្រែឬកែ SRT មុនបង្កើត MP3។'
         )
 
     with tempfile.TemporaryDirectory() as folder:
@@ -1629,7 +1532,7 @@ def create_mp3(srt_text, progress_callback=None):
 
         for index, cue in enumerate(cues):
             clip = root / f'clip_{index:04d}.mp3'
-            profile = VOICE_PROFILES.get(normalize_output_tag(cue['tag']), VOICE_PROFILES['M'])
+            profile = VOICE_PROFILES.get(cue['tag'], VOICE_PROFILES['M_ADULT'])
             run_async(synthesize(cue['text'], profile, clip))
             clips.append(clip)
             clip_durations.append(probe_audio_duration(clip))
@@ -1689,20 +1592,22 @@ def create_mp3(srt_text, progress_callback=None):
             # - keep Khmer consonants understandable
             # - use gentle compression only
             parts.extend([
-                'highpass=f=85:p=2',
-                'lowpass=f=9000:p=2',
-                'equalizer=f=180:t=q:w=1.0:g=0.8',
-                'equalizer=f=900:t=q:w=1.2:g=0.3',
-                'equalizer=f=2500:t=q:w=1.1:g=0.7',
-                'equalizer=f=4700:t=q:w=1.0:g=-0.8',
-                'equalizer=f=6500:t=q:w=0.9:g=-1.4',
+                'highpass=f=75:p=2',
+                'lowpass=f=7600:p=2',
+                'equalizer=f=180:t=q:w=1.0:g=1.2',
+                'equalizer=f=320:t=q:w=1.1:g=1.0',
+                'equalizer=f=1100:t=q:w=1.2:g=0.7',
+                'equalizer=f=2400:t=q:w=1.1:g=0.8',
+                'equalizer=f=4300:t=q:w=1.0:g=-1.8',
+                'equalizer=f=5800:t=q:w=0.9:g=-3.2',
+                'equalizer=f=7000:t=q:w=0.8:g=-3.8',
                 *character_voice_filters(cue.get('tag', 'M_ADULT')),
-                'acompressor=threshold=-22dB:ratio=1.65:attack=18:release=220:makeup=1.03:knee=5',
+                'acompressor=threshold=-23dB:ratio=2.0:attack=14:release=190:makeup=1.15:knee=4',
                 f'atrim=0:{trim_seconds:.3f}',
                 'asetpts=PTS-STARTPTS',
                 f'afade=t=in:st=0:d={fade_in:.3f}',
                 f'afade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f}',
-                'alimiter=limit=0.91:attack=8:release=130',
+                'alimiter=limit=0.94:attack=7:release=100',
                 f'adelay={start_ms}|{start_ms}[{label}]',
             ])
 
@@ -1721,9 +1626,9 @@ def create_mp3(srt_text, progress_callback=None):
         filters.append(
             ''.join(labels)
             + f'amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,'
-              'acompressor=threshold=-19dB:ratio=1.35:attack=22:release=260:makeup=1.0:knee=6,'
-              'alimiter=limit=0.91:attack=10:release=170,'
-              'loudnorm=I=-17:TP=-2.0:LRA=8,'
+              'acompressor=threshold=-18dB:ratio=1.55:attack=18:release=240:makeup=1.0:knee=5,'
+              'alimiter=limit=0.94:attack=8:release=150,'
+              'loudnorm=I=-16:TP=-1.5:LRA=7,'
               f'apad=whole_dur={total:.3f},atrim=0:{total:.3f}[out]'
         )
 
@@ -1758,105 +1663,7 @@ def create_mp3(srt_text, progress_callback=None):
 # PRIVATE CUSTOMER LOGIN + HIDDEN OWNER LICENSE MANAGEMENT
 # This module adds security only. The original app UI/workflow below is unchanged.
 # ─────────────────────────────────────────────────────────────────────────────
-DATA_DIR = Path(os.getenv("DATA_DIR", str(Path(__file__).parent))).expanduser()
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-WORKSPACES_DIR = DATA_DIR / "workspaces"
-WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
-LICENSE_DB_PATH = DATA_DIR / "licenses.db"
-JOBS_DB_PATH = DATA_DIR / "jobs.db"
-MAX_ACTIVE_JOBS_PER_USER = int(os.getenv("MAX_ACTIVE_JOBS_PER_USER", "1"))
-WORKSPACE_RETENTION_HOURS = int(os.getenv("WORKSPACE_RETENTION_HOURS", "48"))
-
-
-def jobs_connection():
-    connection = sqlite3.connect(str(JOBS_DB_PATH), timeout=30)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("PRAGMA busy_timeout=30000")
-    return connection
-
-
-def initialize_jobs_database():
-    with jobs_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS jobs (
-                job_id TEXT PRIMARY KEY,
-                owner_key TEXT NOT NULL,
-                job_type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                progress INTEGER NOT NULL DEFAULT 0,
-                message TEXT,
-                workspace TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                error TEXT
-            )
-            """
-        )
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_key, updated_at)")
-
-
-def _start_job(job_type):
-    owner_key = _workspace_owner_key()
-    with jobs_connection() as connection:
-        active = connection.execute(
-            "SELECT COUNT(*) AS n FROM jobs WHERE owner_key=? AND status IN ('queued','processing','retrying')",
-            (owner_key,),
-        ).fetchone()["n"]
-        if int(active) >= MAX_ACTIVE_JOBS_PER_USER:
-            raise RuntimeError("អ្នកមានការងារមួយកំពុងដំណើរការ។ សូមរង់ចាំឲ្យចប់សិន។")
-        job_id = uuid.uuid4().hex
-        workspace = _ensure_project_workspace()
-        now = _iso()
-        connection.execute(
-            "INSERT INTO jobs(job_id,owner_key,job_type,status,progress,message,workspace,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-            (job_id, owner_key, job_type, "processing", 1, "starting", str(workspace), now, now),
-        )
-    st.session_state.current_job_id = job_id
-    return job_id
-
-
-def _update_job(job_id, status=None, progress=None, message=None, error=None):
-    if not job_id:
-        return
-    fields, values = ["updated_at=?"], [_iso()]
-    for name, value in (("status", status), ("progress", progress), ("message", message), ("error", error)):
-        if value is not None:
-            fields.append(f"{name}=?")
-            values.append(value)
-    values.append(job_id)
-    with jobs_connection() as connection:
-        connection.execute(f"UPDATE jobs SET {', '.join(fields)} WHERE job_id=?", values)
-
-
-def _finish_job(job_id, message="completed"):
-    _update_job(job_id, status="completed", progress=100, message=message, error="")
-
-
-def _fail_job(job_id, exc):
-    _update_job(job_id, status="failed", message="failed", error=str(exc)[:2000])
-
-
-def cleanup_old_workspaces():
-    cutoff = time.time() - max(1, WORKSPACE_RETENTION_HOURS) * 3600
-    if not WORKSPACES_DIR.exists():
-        return
-    for owner_dir in WORKSPACES_DIR.iterdir():
-        if not owner_dir.is_dir():
-            continue
-        for job_dir in owner_dir.iterdir():
-            try:
-                if job_dir.is_dir() and job_dir.stat().st_mtime < cutoff:
-                    shutil.rmtree(job_dir, ignore_errors=True)
-            except OSError:
-                pass
-        try:
-            if not any(owner_dir.iterdir()):
-                owner_dir.rmdir()
-        except OSError:
-            pass
-
+LICENSE_DB_PATH = _data_root() / "licenses.db"
 SESSION_COOKIE_NAME = "ai_khemra_bro_customer_session"
 LOGIN_COOKIE_NAME = "ai_khemra_bro_saved_login"
 SESSION_IDLE_MINUTES = 30
@@ -1881,13 +1688,14 @@ def _parse_iso(value):
 
 
 def _secret(name, default=""):
+    """Read Railway environment variables first, then Streamlit secrets."""
+    env_value = os.getenv(name)
+    if env_value is not None and str(env_value).strip():
+        return str(env_value).strip()
     try:
-        value = st.secrets.get(name, None)
-        if value is not None and str(value).strip():
-            return str(value).strip()
+        return str(st.secrets.get(name, default)).strip()
     except Exception:
-        pass
-    return str(os.getenv(name, default) or default).strip()
+        return str(default).strip()
 
 
 def get_admin_username():
@@ -1897,7 +1705,7 @@ def get_admin_username():
 def get_admin_password():
     # Works immediately even before Streamlit Secrets are configured.
     # For production, set ADMIN_PASSWORD in Streamlit Secrets to override this bootstrap value.
-    return _secret("ADMIN_PASSWORD", "0719067125")
+    return _secret("ADMIN_PASSWORD", "")
 
 
 def license_connection():
@@ -2161,12 +1969,7 @@ def _saved_login_delete():
 
 
 def validate_customer_login(customer_name, access_code, existing_token="", acquire_session=False):
-    """Validate a customer license without binding it to a device or browser.
-
-    A valid, active, unexpired access code may be used again after logout,
-    browser close, phone restart, or from another phone. The customer name is
-    kept for display but the access code is the authentication credential.
-    """
+    """Validate license and enforce one active browser/device session per code."""
     entered_name = normalize_customer_name(customer_name)
     code = normalize_access_code(access_code)
     if not code:
@@ -2178,9 +1981,10 @@ def validate_customer_login(customer_name, access_code, existing_token="", acqui
 
     now = _utcnow()
     code_hash = _hash_code(code)
+    token = existing_token or secrets.token_urlsafe(32)
+    token_hash = _hash_session(token)
     failure_reason = ""
     fresh = None
-    token = existing_token or secrets.token_urlsafe(32)
 
     with license_connection() as connection:
         row = connection.execute(
@@ -2195,27 +1999,32 @@ def validate_customer_login(customer_name, access_code, existing_token="", acqui
         elif now >= _parse_iso(row["expires_at"]):
             failure_reason = "កញ្ចប់របស់អ្នកបានផុតកំណត់។ សូមទាក់ទង Owner ដើម្បីបន្តសិទ្ធិប្រើប្រាស់។"
         else:
-            # No device lock and no single-session lock. A purchased code can
-            # be reused after logout/close and can work on any phone/browser.
-            if acquire_session:
+            active_hash = str(row["active_session_hash"] or "")
+            last_seen_raw = row["active_session_last_seen"]
+            active_is_fresh = False
+            if active_hash and last_seen_raw:
+                try:
+                    active_is_fresh = now - _parse_iso(last_seen_raw) < datetime.timedelta(minutes=SESSION_IDLE_MINUTES)
+                except Exception:
+                    active_is_fresh = False
+
+            same_session = bool(active_hash and hmac.compare_digest(active_hash, token_hash))
+            if active_is_fresh and not same_session:
+                failure_reason = "Access Code នេះកំពុងប្រើនៅលើទូរសព្ទ ឬ Browser មួយផ្សេង។ សូម Logout ពីឧបករណ៍ចាស់ ឬរង់ចាំ Session ផុតកំណត់។"
+            else:
                 connection.execute(
                     """
                     UPDATE licenses
-                    SET active_session_hash=NULL,
-                        active_session_last_seen=NULL,
-                        last_login_at=?,
-                        login_count=login_count+1
+                    SET active_session_hash=?, active_session_last_seen=?,
+                        last_login_at=CASE WHEN ? THEN ? ELSE last_login_at END,
+                        login_count=login_count + CASE WHEN ? THEN 1 ELSE 0 END
                     WHERE id=?
                     """,
-                    (_iso(now), row["id"]),
+                    (token_hash, _iso(now), 1 if acquire_session else 0, _iso(now),
+                     1 if acquire_session else 0, row["id"]),
                 )
-            else:
-                connection.execute(
-                    "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL WHERE id=?",
-                    (row["id"],),
-                )
-            connection.commit()
-            fresh = connection.execute("SELECT * FROM licenses WHERE id=?", (row["id"],)).fetchone()
+                connection.commit()
+                fresh = connection.execute("SELECT * FROM licenses WHERE id=?", (row["id"],)).fetchone()
 
     if acquire_session:
         _record_login_attempt(attempt_key, not bool(failure_reason))
@@ -2224,26 +2033,25 @@ def validate_customer_login(customer_name, access_code, existing_token="", acqui
 
     display_name = str(fresh["customer_name"] or entered_name or "Customer")
     if acquire_session:
-        _audit("customer_login", display_name, "success|multi-device")
+        _audit("customer_login", display_name, "success|single-device")
     return True, "", dict(fresh), token
 
-
 def release_customer_session(access_code, token, actor="customer"):
-    """Log out this browser only; never block reuse of the purchased code."""
+    """Release only the session that owns the active session token."""
     code = normalize_access_code(access_code)
+    token_hash = _hash_session(token) if token else ""
     with license_connection() as connection:
         row = connection.execute(
-            "SELECT id,customer_name FROM licenses WHERE access_code_hash=? OR access_code_display=?",
+            "SELECT id,customer_name,active_session_hash FROM licenses WHERE access_code_hash=? OR access_code_display=?",
             (_hash_code(code), code),
         ).fetchone()
-        if row:
+        if row and token_hash and hmac.compare_digest(str(row["active_session_hash"] or ""), token_hash):
             connection.execute(
                 "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL WHERE id=?",
                 (row["id"],),
             )
             connection.commit()
             _audit("customer_logout", actor, row["customer_name"])
-
 
 def license_rows(search_text=""):
     query = "SELECT * FROM licenses"
@@ -2460,10 +2268,30 @@ def public_login_screen():
                 )
 
         if submitted:
+            entered_name = str(name or "").strip()
+            entered_code = str(code or "")
+
+            # Allow the Owner to sign in from the main login form as well.
+            # This avoids confusion when the hidden Owner button is not obvious on mobile.
+            owner_name_ok = hmac.compare_digest(
+                entered_name.casefold(),
+                get_admin_username().casefold(),
+            )
+            owner_password_ok = hmac.compare_digest(
+                entered_code,
+                get_admin_password(),
+            )
+            if owner_name_ok and owner_password_ok:
+                st.session_state.admin_authenticated = True
+                st.session_state.admin_gate_visible = True
+                st.session_state.owner_click_count = 0
+                _audit("admin_login", entered_name or get_admin_username(), "main_login_success")
+                st.rerun()
+
             existing = _session_cookie_get()
             ok, message, row, token = validate_customer_login(
-                name,
-                code,
+                entered_name,
+                entered_code,
                 existing,
                 acquire_session=True,
             )
@@ -2663,14 +2491,6 @@ def admin_dashboard():
 
 
 initialize_license_database()
-initialize_jobs_database()
-cleanup_old_workspaces()
-# Compatibility cleanup: remove historical device/session locks created by older versions.
-with license_connection() as _lock_cleanup_connection:
-    _lock_cleanup_connection.execute(
-        "UPDATE licenses SET active_session_hash=NULL, active_session_last_seen=NULL"
-    )
-    _lock_cleanup_connection.commit()
 hidden_owner_trigger()
 if st.session_state.get("admin_gate_visible", False) or st.session_state.get("admin_authenticated", False):
     admin_dashboard()
@@ -2756,7 +2576,6 @@ with st.container(key="api_menu_container"):
             [
                 "gemini-3.5-flash-lite",
                 "gemini-3.6-flash",
-                "gemini-3.1-flash-lite",
                 "gemini-3.5-flash",
                 "gemini-flash-latest",
             ],
@@ -2826,7 +2645,7 @@ if not valid_api_keys:
     st.warning("🔐 មិនទាន់មាន Gemini API Key — សូមបញ្ចូលក្នុង ☰ Settings ដើម្បីបកប្រែអក្សរទៅជាភាសាខ្មែរ។")
 
 st.markdown(
-    '<div class="hero"><h1>AI KHEMRA BRO</h1><p>PROFESSIONAL MULTI-USER DUBBING WORKSTATION</p></div>',
+    '<div class="hero"><h1>AI KHEMRA BRO</h1><p>GLOBAL AI DUBBING & SUBTITLING WORKSTATION</p></div>',
     unsafe_allow_html=True,
 )
 
@@ -2863,13 +2682,6 @@ with tab_video:
                 st.video(uploaded_video)
 
             if st.button("📝 Generate Khmer SRT", key="generate_srt", use_container_width=True):
-                job_id = None
-                video_path = None
-                try:
-                    job_id = _start_job("video_to_srt")
-                except Exception as exc:
-                    st.error(f"❌ {exc}")
-                    st.stop()
                 video_path = save_upload(uploaded_video)
                 st.session_state.project_temp_files.append(str(video_path))
                 progress_bar = st.progress(1)
@@ -2906,37 +2718,34 @@ with tab_video:
                                     progress_text.markdown(f"### ⏱️ {percent}% • {minutes:02d}:{seconds:02d}<br>🌐 កំពុងបកប្រែទៅភាសាខ្មែរ…", unsafe_allow_html=True)
                                     time.sleep(0.5)
                                 generated_srt = future.result()
+                            parsed_result = parse_srt(generated_srt)
+                            invalid_rows = [i + 1 for i, cue in enumerate(parsed_result) if not valid_khmer_dialogue(cue.get("text", ""))]
+                            if not parsed_result or invalid_rows:
+                                raise ValueError(f"លទ្ធផលបកប្រែមិនមែនជាខ្មែរត្រឹមត្រូវនៅបន្ទាត់៖ {invalid_rows[:20]}")
                             notice = "✅ Khmer SRT បានបង្កើតរួចរាល់។"
                         except Exception as translation_exc:
-                            # Keep source transcription separately; never place Chinese in the Khmer editor.
+                            # Keep Source SRT separately; never place Chinese text in the Khmer editor.
                             generated_srt = ""
                             notice = (
-                                "⚠️ បានរក្សាទុក Source SRT ដាច់ដោយឡែក ប៉ុន្តែការបកប្រែខ្មែរមិនទាន់ជោគជ័យ។ "
+                                "⚠️ Whisper បានបង្កើត Source SRT រួច ប៉ុន្តែ Gemini មិនអាចបកប្រែបាន។ "
                                 + friendly_ai_error(translation_exc, len(valid_api_keys))
                             )
                     else:
                         generated_srt = ""
-                        notice = "⚠️ បានបង្កើត Source SRT ដាច់ដោយឡែក។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។"
+                        notice = "⚠️ បានបង្កើត Source SRT រួច។ ដាក់ Gemini API Key ក្នុង Settings ដើម្បីបកប្រែទៅខ្មែរ។ Khmer SRT មិនត្រូវបានបង្កើតនៅឡើយទេ។"
 
                     st.session_state.srt_text = generated_srt
                     st.session_state.main_srt_editor = generated_srt
-                    workspace = _ensure_project_workspace()
-                    (workspace / "source.srt").write_text(source_srt, encoding="utf-8")
-                    if generated_srt:
-                        validate_khmer_srt(generated_srt)
-                        (workspace / "khmer.srt").write_text(generated_srt, encoding="utf-8")
                     st.session_state.pending_srt = ""
                     st.session_state.audio_bytes = None
                     st.session_state.workflow_notice = notice
                     progress_bar.progress(100)
-                    _finish_job(job_id, "Khmer SRT completed" if generated_srt else "Source SRT completed")
                     time.sleep(0.25)
                     progress_bar.empty()
                     progress_text.empty()
                     st.rerun()
 
                 except Exception as exc:
-                    _fail_job(job_id, exc)
                     progress_bar.empty()
                     progress_text.empty()
                     st.error(f"❌ ដំណើរការវីដេអូមិនបាន៖ {exc}")
@@ -2950,15 +2759,7 @@ with tab_video:
             st.success(workflow_notice)
         else:
             st.warning(workflow_notice)
-    st.caption("SRT ខ្មែរនឹងចូលប្រអប់នេះតែពេលបកប្រែបានពេញលេញប៉ុណ្ណោះ។ អ្នកអាចកែបានមុន Generate MP3។")
-    if st.session_state.get("source_srt_text") and not st.session_state.get("srt_text"):
-        st.download_button(
-            "⬇️ ទាញ Source SRT (មិនទាន់បកប្រែ)",
-            ("\ufeff" + st.session_state.source_srt_text).encode("utf-8"),
-            f"{safe_download_stem(st.session_state.get('source_video_stem'), 'source')}_source.srt",
-            "application/x-subrip",
-            use_container_width=True,
-        )
+    st.caption("SRT នឹងចូលប្រអប់នេះដោយស្វ័យប្រវត្តិ ពេលដំណើរការដល់ 100%។ អ្នកអាចកែបានមុន Generate MP3។")
 
     pending_editor_update = st.session_state.pop("pending_editor_update", None)
     if pending_editor_update is not None:
@@ -3040,16 +2841,9 @@ with tab_video:
         )
 
         if generate_clicked:
-            audio_job_id = None
             if not st.session_state.srt_text.strip():
                 st.warning("សូមបង្កើត ឬបញ្ចូល SRT ជាមុន។")
             else:
-                try:
-                    validate_khmer_srt(st.session_state.srt_text)
-                    audio_job_id = _start_job("srt_to_mp3")
-                except Exception as exc:
-                    st.error(f"❌ {exc}")
-                    st.stop()
                 progress_bar = st.progress(0)
                 progress_text = st.empty()
                 started_at = time.monotonic()
@@ -3069,18 +2863,14 @@ with tab_video:
                         st.session_state.srt_text,
                         progress_callback=update_audio_progress,
                     )
-                    workspace = _ensure_project_workspace()
-                    (workspace / "khmer_dubbed.mp3").write_bytes(st.session_state.audio_bytes)
                     # Clear the processing display immediately after completion.
                     progress_bar.empty()
                     progress_text.empty()
-                    _finish_job(audio_job_id, "MP3 completed")
                     if not st.session_state.get("mp3_download_name"):
                         stem = st.session_state.get("source_video_stem", "khmer_story")
                         st.session_state.mp3_download_name = f"{stem}_khmer"
                     st.rerun()
                 except Exception as exc:
-                    _fail_job(audio_job_id, exc)
                     progress_bar.empty()
                     progress_text.empty()
                     st.error(f"❌ បង្កើត MP3 មិនបាន៖ {exc}")
