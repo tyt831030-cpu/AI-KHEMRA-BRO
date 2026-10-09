@@ -66,11 +66,11 @@ st.markdown(
       background:#f6f7fa !important;color:#131722 !important;border-radius:11px !important;
     }
     [data-testid="stTextInput"] label {color:var(--ink) !important;}
-    .stButton button[kind="primary"],.stDownloadButton button {
-      border:0;border-radius:12px;min-height:46px;font-weight:800;color:#11151c;
-      background:linear-gradient(100deg,var(--gold),#ffaf18);box-shadow:0 7px 20px #ffc92824;
+    button[kind="primary"],[data-testid="stFormSubmitButton"] button,.stDownloadButton button {
+      border:0 !important;border-radius:12px;min-height:46px;font-weight:800;color:#11151c !important;
+      background:linear-gradient(100deg,var(--gold),#ffaf18) !important;box-shadow:0 7px 20px #ffc92824;
     }
-    .stButton button[kind="primary"]:hover,.stDownloadButton button:hover {color:#11151c;filter:brightness(1.05);border:0;}
+    button[kind="primary"]:hover,[data-testid="stFormSubmitButton"] button:hover,.stDownloadButton button:hover {color:#11151c !important;filter:brightness(1.05);border:0 !important;}
     div[data-testid="stMetric"] {background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px;}
     div[data-testid="stMetricLabel"] {color:var(--muted);}
     [data-testid="stAlert"] {border-radius:12px;}
