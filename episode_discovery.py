@@ -368,7 +368,7 @@ def discover_episodes(
                 thumbnail = _load_thumbnail(session, fallback_thumb_url, final_url, thumbnail_cache)
                 return DiscoveryResult(series_title, [Episode(1, series_title, final_url, root_media, thumbnail)])
             raise DiscoveryError(
-                "មិនអាចរកបញ្ជីភាគក្នុង HTML សាធារណៈបានទេ។ ប្រភពអាចបង្កើតភាគដោយ JavaScript ឬទាមទារ login/private API; សូមផ្ញើទំព័រប្រភពដែលបង្ហាញ episode links ជាសាធារណៈ។"
+                "មិនអាចរកបញ្ជីភាគក្នុង HTML សាធារណៈបានទេ។ ប្រភពអាចបង្ហាញតាម JavaScript ឬក្នុង app ប៉ុណ្ណោះ។ សូមប្រើទំព័រដែលបង្ហាញ episode links ជាសាធារណៈ ឬបិទភ្ជាប់ direct HLS (.m3u8) / MP4 link ដែលអ្នកមានសិទ្ធិទាញយក។"
             )
 
         truncated = len(candidates) > MAX_EPISODE_PAGES

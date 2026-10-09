@@ -94,10 +94,12 @@ st.markdown(
 )
 st.title("ស្វែងរក និងទាញយកភាគរឿង")
 st.markdown(
-    '<p class="intro">បិទភ្ជាប់តំណទំព័ររឿង ដើម្បីស្វែងរកភាគដែលប្រភពបង្ហាញជាសាធារណៈ។ '
-    'បន្ទាប់មកជ្រើសទាញយកភាគមួយៗ ឬរៀបចំ ZIP សម្រាប់ភាគដែលប្រភពគាំទ្រ។</p>',
+    '<p class="intro">បិទភ្ជាប់តំណទំព័រដែលបង្ហាញបញ្ជីភាគជាសាធារណៈ ឬតំណ HLS (.m3u8) / MP4 ផ្ទាល់។ '
+    'បន្ទាប់ពីស្វែងរក ចុច “រៀបចំ MP4 ភាគនេះ” រួចចុច “ទាញយកឯកសារ MP4” ដើម្បីរក្សាទុក។ '
+    'អាចរៀបចំ ZIP បាន ប្រសិនបើប្រភពបង្ហាញ direct link គ្រប់ភាគ។</p>',
     unsafe_allow_html=True,
 )
+st.caption("បើតំណបង្ហាញតែប៊ូតុង “បើកក្នុង app” ហើយមិនមាន public episode/video link ទេ វាមិនអាចទាញយកពីទំព័រនោះបានទេ។")
 
 
 def _clear_downloads() -> None:
@@ -202,7 +204,7 @@ if result_state:
                 image_col.markdown("▶")
             details_col.text(f"ភាគ {number} · {title}")
             if media_url:
-                if details_col.button("ទាញយកភាគនេះ", key=f"prepare_episode_{key}", use_container_width=True):
+                if details_col.button("រៀបចំ MP4 ភាគនេះ", key=f"prepare_episode_{key}", use_container_width=True):
                     for state_key in list(st.session_state):
                         if state_key.startswith("prepared_episode_"):
                             st.session_state.pop(state_key, None)
@@ -232,7 +234,7 @@ if result_state:
                 if prepared:
                     details_col.caption(f"{human_bytes(int(prepared['bytes']))} · {human_time(float(prepared['duration']))}")
                     details_col.download_button(
-                        "រក្សាទុក MP4",
+                        "ទាញយកឯកសារ MP4",
                         data=prepared["data"],
                         file_name=str(prepared["file"]),
                         mime="video/mp4",
