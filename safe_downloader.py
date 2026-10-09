@@ -90,19 +90,25 @@ def download_video(
     episode: int,
     title: str = "",
     quality: str | int = "best",
+    budget: DownloadBudget | None = None,
+    max_output_bytes: int | None = None,
 ) -> tuple[bytes, dict[str, object]]:
     """Download one authorized video and return a bounded browser payload.
 
     Temporary segment and output files are removed before this function returns.
     Streamlit retains only the capped output bytes in the requesting session.
     """
+    requested_limit = MAX_BROWSER_FILE_BYTES if max_output_bytes is None else max_output_bytes
+    output_limit = min(MAX_BROWSER_FILE_BYTES, requested_limit)
+    if output_limit <= 0:
+        raise BrowserFileTooLarge("no browser output budget remains")
     if not DOWNLOAD_SLOTS.acquire(blocking=False):
         raise TooManyDownloads("download capacity is busy")
 
     root: str | None = None
     session: SafeHttpSession | None = None
     started = time.monotonic()
-    budget = DownloadBudget(MAX_NETWORK_BYTES, MAX_NETWORK_SECONDS)
+    budget = budget or DownloadBudget(MAX_NETWORK_BYTES, MAX_NETWORK_SECONDS)
     try:
         root = tempfile.mkdtemp(prefix="ai-khemra-video-")
         output_dir = Path(root) / "out"
@@ -159,7 +165,7 @@ def download_video(
         if output.suffix.lower() != ".mp4" or output.stat().st_size <= 0:
             raise RuntimeError("The source could not be packaged as an MP4 video.")
         output_size = output.stat().st_size
-        if output_size > MAX_BROWSER_FILE_BYTES:
+        if output_size > output_limit:
             raise BrowserFileTooLarge("The output exceeds Streamlit's browser download memory limit.")
 
         payload = output.read_bytes()
@@ -193,6 +199,8 @@ def public_error_message(exc: Exception) -> str:
         return "លើសកម្រិត 512 MiB, 25 នាទី network (អតិបរមា 30 នាទីសរុប), ឬកម្រិត HLS។ សូមជ្រើសរើសគុណភាពទាបជាង។"
     if isinstance(exc, BrowserFileTooLarge):
         return "ឯកសារ MP4 ធំជាង 350 MiB ដែល browser download របស់ app នេះអនុញ្ញាត។ សូមជ្រើសរើសគុណភាពទាបជាង។"
+    if "All-episode archive reached the browser memory limit" in str(exc):
+        return "ឯកសារ ZIP លើសកម្រិត 350 MiB ដែល browser download អនុញ្ញាត។ សូមទាញយកភាគនីមួយៗជំនួស។"
     if isinstance(exc, TooManyDownloads):
         return "មានការទាញយកពីរដំណើរការរួចហើយ។ សូមរង់ចាំបន្តិច រួចសាកម្ដងទៀត។"
     if isinstance(exc, UnsupportedEncryption):
